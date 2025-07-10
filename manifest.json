@@ -1,0 +1,13 @@
+{
+  "Author": "UmaAi Team",
+  "InternalName": "LegendScenarioAnalyzer",
+  "Name": "解析传奇杯回合信息",
+  "Description": "解析传奇杯回合信息",
+  "Changelog": "",
+  "Version": "1.0.0",
+  "Dependencies": [],
+  "Targets": [],
+  "RepositoryUrl": "https://github.com/URA-Plugins/LegendScenarioAnalyzer",
+  "DownloadUrl": "https://gh.shuise.dev/github.com/URA-Plugins/LegendScenarioAnalyzer/releases/latest/download/LegendScenarioAnalyzer.zip",
+  "LastUpdate": "1751719983"
+}
