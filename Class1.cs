@@ -260,14 +260,17 @@ public sealed class LegendScenarioAnalyzer : IPlugin
         if (data.Stage == LegendScenarioStage.Training)
             currentTurn = turn.Turn;
 
-        LegendTrainingDisplay.SetCurrentDisplay(this, extraModifier => RenderTrainingDisplay(context, extraModifier));
+        LegendTrainingDisplay.SetCurrentDisplay(
+            this,
+            (extraModifier, switchToWorkspace) => RenderTrainingDisplay(context, extraModifier, switchToWorkspace));
         RenderTrainingDisplay(context, extraModifier: null);
         return ValueTask.CompletedTask;
     }
 
     void RenderTrainingDisplay(
         LegendTrainingDisplayContext context,
-        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>? extraModifier)
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>? extraModifier,
+        bool switchToWorkspace = true)
     {
         var builder = LegendTrainingDisplayBuilder.CreateDefault(context);
         ApplyDisplayModifiers(context, builder);
@@ -275,8 +278,15 @@ public sealed class LegendScenarioAnalyzer : IPlugin
             ApplyDisplayModifier(context, builder, extraModifier);
 
         var content = LegendTrainingDisplayRenderer.Render(builder);
-        SwitchFromBootstrapOnFirstActivation();
-        LiveDisplay.SetPanel(Workspace, TrainingPanelKey, "传奇杯训练", content, fullBleed: true);
+        if (switchToWorkspace)
+            SwitchFromBootstrapOnFirstActivation();
+        LiveDisplay.SetPanel(
+            Workspace,
+            TrainingPanelKey,
+            "传奇杯训练",
+            content,
+            fullBleed: true,
+            switchToWorkspace: switchToWorkspace);
     }
 
     void ApplyDisplayModifiers(
@@ -309,7 +319,9 @@ public sealed class LegendScenarioAnalyzer : IPlugin
     {
         if (data.CharaInfo is null || data.HomeInfo?.command_info_array is not { } homeCommands)
             return false;
-        if (data.CharaInfo.state is 2 or 3 || data.RaceStartInfo is not null)
+        if (data.CharaInfo.state is 2 or 3)
+            return false;
+        if (data.Stage == LegendScenarioStage.Training && data.RaceStartInfo is not null)
             return false;
         if (data.DataSet?.command_info_array is not { } legendCommands ||
             data.DataSet.gauge_count_array is null ||

@@ -43,7 +43,8 @@ public static class LegendTrainingDisplay
     }
 
     public static bool ModifyCurrent(
-        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier)
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier,
+        bool switchToWorkspace = true)
     {
         ArgumentNullException.ThrowIfNull(modifier);
 
@@ -54,22 +55,24 @@ public static class LegendTrainingDisplay
         if (current is null)
             return false;
 
-        current.Render(modifier);
+        current.Render(modifier, switchToWorkspace);
         return true;
     }
 
-    public static bool PatchCurrent(Action<LegendTrainingDisplayPatch> patch)
+    public static bool PatchCurrent(
+        Action<LegendTrainingDisplayPatch> patch,
+        bool switchToWorkspace = true)
     {
         ArgumentNullException.ThrowIfNull(patch);
 
         var displayPatch = new LegendTrainingDisplayPatch();
         patch(displayPatch);
-        return ModifyCurrent((_, display) => displayPatch.Apply(display));
+        return ModifyCurrent((_, display) => displayPatch.Apply(display), switchToWorkspace);
     }
 
     internal static void SetCurrentDisplay(
         object owner,
-        Action<Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?> render)
+        Action<Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?, bool> render)
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(render);
@@ -91,7 +94,7 @@ public static class LegendTrainingDisplay
 
     sealed record CurrentDisplay(
         object Owner,
-        Action<Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?> Render);
+        Action<Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?, bool> Render);
 }
 
 public sealed class LegendTrainingDisplayEditor

@@ -364,37 +364,88 @@ internal static class LegendTrainingDisplayRenderer
         table.HideHeaders();
         table.NoBorder();
         table.AddColumn(string.Empty);
+        table.AddColumn(string.Empty);
+        table.AddColumn(string.Empty);
+        table.AddColumn(string.Empty);
+        table.AddColumn(string.Empty);
+        table.AddColumn(string.Empty);
+        table.AddColumn(string.Empty);
+
+        table.Columns[0].Padding = new(0, 0, 1, 0);
+        table.Columns[1].Padding = new(0, 0, 2, 0);
+        table.Columns[2].Padding = new(0, 0, 2, 0);
+        table.Columns[3].Padding = new(0, 0, 2, 0);
+        table.Columns[4].Padding = new(0, 0, 2, 0);
+        table.Columns[5].Padding = new(0, 0, 2, 0);
+        table.Columns[6].Padding = new(0, 0, 0, 0);
+
+        LegendBuffColor? previousColor = null;
         foreach (var card in cards)
-            table.AddRow(new Padder(BuildSelectionPanel(card)).Padding(0, 0, 0, 0));
+        {
+            if (previousColor is not null && previousColor != card.Color)
+                AddSelectionSpacerRow(table);
+
+            AddSelectionRow(table, card);
+            previousColor = card.Color;
+        }
 
         return table;
     }
 
-    static Panel BuildSelectionPanel(LegendSelectionCard card)
+    static void AddSelectionSpacerRow(Table table)
     {
-        var panel = new Panel(new Markup(BuildSelectionLine(card)));
-        panel.BorderColor(card.BorderColor ?? LegendColors.BorderColor(card.Color));
-        return panel;
+        table.AddRow(
+            Text.Empty,
+            Text.Empty,
+            Text.Empty,
+            Text.Empty,
+            Text.Empty,
+            Text.Empty,
+            Text.Empty);
     }
 
-    static string BuildSelectionLine(LegendSelectionCard card)
+    static void AddSelectionRow(Table table, LegendSelectionCard card)
     {
         var color = LegendColors.MarkupPrefix(card.Color);
+        var parts = BuildSelectionParts(card);
+        table.AddRow(
+            new Text("│", new Style(card.BorderColor ?? LegendColors.BorderColor(card.Color))),
+            new Markup($"{color}{Markup.Escape(parts.Icon)} {Markup.Escape(parts.Label)}[/]"),
+            new Markup($"[bold]{Markup.Escape(parts.Title)}[/]"),
+            new Markup(Markup.Escape(parts.Effect)),
+            new Markup($"[grey]{Markup.Escape(parts.Score)}[/]"),
+            new Markup($"[grey]{Markup.Escape(parts.Advice)}[/]"),
+            new Markup($"{color}▶[/]"));
+    }
+
+    static SelectionLineParts BuildSelectionParts(LegendSelectionCard card)
+    {
         var icon = TruncateDisplay($"● ★{card.Rank}", 6);
         var label = TruncateDisplay(card.SelectionLabel, 13);
         var title = TruncateDisplay(card.Title, 12);
         var effect = TruncateDisplay(card.Effect, 12);
-        var extra = TruncateDisplay(
-            string.Join(
-                " | ",
-                card.Rows
-                    .Select(RenderInlineText)
-                    .Select(x => CompactSelectionInlineText(card, x))
-                    .Where(x => x.Length != 0)),
-            38);
-        var extraText = extra.Length == 0 ? string.Empty : $"  [grey]{Markup.Escape(extra)}[/]";
+        var score = string.Empty;
+        var adviceRows = new List<string>();
 
-        return $"{color}{Markup.Escape(icon)} {Markup.Escape(label)}[/]  [bold]{Markup.Escape(title)}[/]  {Markup.Escape(effect)}{extraText}  {color}▶[/]";
+        foreach (var row in card.Rows)
+        {
+            var text = CompactSelectionInlineText(card, RenderInlineText(row));
+            if (text.Length == 0)
+                continue;
+
+            if (text.StartsWith("AI评分:", StringComparison.Ordinal))
+                score = text;
+            else
+                adviceRows.Add(text);
+        }
+
+        return new(
+            icon,
+            label,
+            title,
+            effect,
+            TruncateDisplay(score, 13),
+            TruncateDisplay(string.Join(" | ", adviceRows), 38));
     }
 
     static string CompactSelectionInlineText(LegendSelectionCard card, string text)
@@ -491,6 +542,14 @@ internal static class LegendTrainingDisplayRenderer
 
         return builder.ToString();
     }
+
+    sealed record SelectionLineParts(
+        string Icon,
+        string Label,
+        string Title,
+        string Effect,
+        string Score,
+        string Advice);
 
     static IRenderable BuildExtraTable(IReadOnlyList<IRenderable> rows)
     {

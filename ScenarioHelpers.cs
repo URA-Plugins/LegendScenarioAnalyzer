@@ -226,7 +226,7 @@ public static class LegendTrainingStatsCalculator
                 if (!TurnInfoLegend.ToTrainId.TryGetValue(item.command_id, out var value) || value != trainId)
                     continue;
 
-                foreach (var trainParam in item.params_inc_dec_info_array)
+                foreach (var trainParam in item.params_inc_dec_info_array ?? [])
                 {
                     if (trainParams.ContainsKey(trainParam.target_type))
                         trainParams[trainParam.target_type] += trainParam.value;
