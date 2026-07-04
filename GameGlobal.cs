@@ -58,7 +58,6 @@ namespace LegendScenarioAnalyzer
             [902] = 102,
             [906] = 106
         }.ToFrozenDictionary();
-        public static readonly int[] TrainIdsMecha = [901, 105, 902, 103, 906]; //Mecha杯（9号剧本）
         public static readonly int[] TrainIds = [101, 105, 102, 103, 106];
         public static readonly FrozenDictionary<int, int> ToTrainIndex = new Dictionary<int, int>
         {
@@ -160,7 +159,13 @@ namespace LegendScenarioAnalyzer
 
         public static void LoadLegendBuffs()
         {
-            using var ms = new MemoryStream(File.ReadAllBytes(Path.Combine("PluginData", "LegendScenarioAnalyzer", "legend_buff.csv")));
+            var dataDirectory = Path.Combine("PluginData", "LegendScenarioAnalyzer");
+            Directory.CreateDirectory(dataDirectory);
+            var path = Path.Combine(dataDirectory, "legend_buff.csv");
+            if (!File.Exists(path))
+                throw new FileNotFoundException($"缺少传奇杯心得数据文件，请将 legend_buff.csv 放到 {Path.GetFullPath(dataDirectory)}。", path);
+
+            using var ms = new MemoryStream(File.ReadAllBytes(path));
             using var reader = new StreamReader(ms);
             using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
             LegendBuffInfo = csv.GetRecords<LegendBuff>().ToList();

@@ -1,493 +1,603 @@
-﻿using EventLoggerPlugin;
-using Gallop;
+using System.Text;
 using Spectre.Console;
-using UmamusumeResponseAnalyzer.Game.TurnInfo;
-using UmamusumeResponseAnalyzer.LocalizedLayout.Handlers;
-using static LegendScenarioAnalyzer.i18n.Game;
+using Spectre.Console.Rendering;
 
-namespace LegendScenarioAnalyzer
+namespace LegendScenarioAnalyzer;
+
+internal sealed class LegendTrainingDisplayBuilder
 {
-    public static class LegendHandler
+    public LegendScenarioStage Stage { get; private init; }
+    public List<LegendDisplayPanel> HeaderPanels { get; } = [];
+    public List<LegendDisplayPanel> ScenarioPanels { get; } = [];
+    public List<IRenderable> ImportantRows { get; } = [];
+    public List<LegendTrainingCard> TrainingCards { get; } = [];
+    public List<LegendSelectionCard> SelectionCards { get; } = [];
+    public List<IRenderable> ExtraRows { get; } = [];
+
+    public LegendTrainingCard? FindTrainingCardByTrainIndex(int trainIndex)
+        => TrainingCards.FirstOrDefault(x => x.TrainIndex == trainIndex);
+
+    public LegendTrainingCard? FindTrainingCardByCommandId(int commandId)
+        => TrainingCards.FirstOrDefault(x => x.CommandId == commandId);
+
+    public LegendSelectionCard? FindSelectionCardByBuffId(int buffId)
+        => SelectionCards.FirstOrDefault(x => x.BuffId == buffId);
+
+    public LegendSelectionCard? FindSelectionCard(LegendBuffColor color, int ordinalWithinColor)
+        => SelectionCards.FirstOrDefault(x => x.Color == color && x.OrdinalWithinColor == ordinalWithinColor);
+
+    public LegendDisplayPanel? FindScenarioPanel(string key)
+        => ScenarioPanels.FirstOrDefault(x => x.Key == key);
+
+    public static LegendTrainingDisplayBuilder CreateDefault(LegendTrainingDisplayContext context)
     {
-        //public static class LegendToSave
-        //{
-        //
-        //    public static int lastTurn = 0;
-        //    public static string lastDataToSave="";
-        //}
+        var builder = new LegendTrainingDisplayBuilder { Stage = context.ResponseData.Stage };
+        var turn = context.Turn;
+        var data = context.ResponseData;
+        var totalValue = turn.StatsRevised.Sum();
 
-        public static int GetCommandInfoStage_legend(SingleModeCheckEventResponse @event)
+        builder.HeaderPanels.Add(new("date", "日期", new Text($"{turn.Year}{LegendDisplayText.Year} {turn.Month}{LegendDisplayText.Month}{turn.HalfMonth}"), ratio: 4));
+        builder.HeaderPanels.Add(new("total", "总属性", new Markup($"[cyan]总属性: {totalValue}, Pt: {data.CharaInfo.skill_point}[/]"), ratio: 6));
+        builder.HeaderPanels.Add(new("vital", "体力", new Markup($"{LegendDisplayText.Vital}: [green]{turn.Vital}[/]/{turn.MaxVital}"), ratio: 6));
+        builder.HeaderPanels.Add(new("motivation", "干劲", new Markup(LegendDisplayText.MotivationMarkup(data.CharaInfo.motivation)), ratio: 3));
+
+        AddImportantRows(context, builder);
+        AddScenarioPanels(context, builder);
+
+        if (data.Stage == LegendScenarioStage.Training)
+            AddTrainingCards(context, builder);
+        else
+            AddNonTrainingRows(context, builder);
+
+        return builder;
+    }
+
+    static void AddImportantRows(
+        LegendTrainingDisplayContext context,
+        LegendTrainingDisplayBuilder builder)
+    {
+        var turn = context.Turn;
+        var data = context.ResponseData;
+
+        if (context.PreviousTurn != turn.Turn - 1
+            && context.PreviousTurn != turn.Turn
+            && turn.Turn != 1)
         {
-            //if ((@event.data.unchecked_event_array != null && @event.data.unchecked_event_array.Length > 0)) return;
-            if (@event.data.chara_info.playing_state == 1 && (@event.data.unchecked_event_array == null || @event.data.unchecked_event_array.Length == 0))
-            {
-                return 2;
-            } //常规训练
-            else if (@event.data.chara_info.playing_state == 5 && @event.data.unchecked_event_array.Any(x => x.story_id == 400010112)) //选buff
-            {
-                return 5;
-            }
-            else if (@event.data.chara_info.playing_state == 5 &&
-                (@event.data.unchecked_event_array.Any(x => x.story_id == 830241003))) //选团卡事件
-            {
-                return 3;
-            }
-            else
-            {
-                return 0;
-            }
+            builder.ImportantRows.Add(new Markup(LegendDisplayText.WrongTurnAlert(context.PreviousTurn, turn.Turn)));
         }
-        public static void ParseLegendCommandInfo(SingleModeCheckEventResponse @event)
+
+        var availableTrainingCount = data.HomeInfo!.command_info_array.Count(x => x.is_enable == 1);
+        if (availableTrainingCount <= 1)
+            builder.ImportantRows.Add(new Markup($"[aqua]非训练回合 playingState = {data.CharaInfo.playing_state}[/]"));
+
+        if (data.Stage != LegendScenarioStage.Training)
+            builder.ImportantRows.Add(new Markup($"[aqua]非训练阶段: {LegendDisplayText.StageName(data.Stage)}[/]"));
+
+        if (data.CharaInfo.skill_point > 9500)
+            builder.ImportantRows.Add(new Markup("[red]剩余PT>9500（上限9999），请及时学习技能[/]"));
+    }
+
+    static void AddScenarioPanels(
+        LegendTrainingDisplayContext context,
+        LegendTrainingDisplayBuilder builder)
+    {
+        var turn = context.Turn;
+        var dataSet = context.DataSet;
+        var buffPeriod = (turn.Turn - 1) % 6 + 1;
+        var buffPeriodColor = buffPeriod switch
         {
-            //var thisturn = @event.data.chara_info.turn;
-            //if(thisturn>LegendToSave.lastTurn && LegendToSave.lastDataToSave != "")
-            //{
-            //    File.AppendAllText($"ura_statistic.txt", LegendToSave.lastDataToSave+"\n");
-            //    LegendToSave.lastTurn = thisturn;
-            //    LegendToSave.lastDataToSave = "";
-            //}
-            //if(@event.data.legend_data_set!=null && @event.data.legend_data_set.obtainable_buff_id_array != null && @event.data.legend_data_set.obtainable_buff_id_array.Length>0)
-            //{
-            //    var obtainableBuffIdArray = @event.data.legend_data_set.obtainable_buff_id_array;
-            //    var datatosave = string.Join(" ", obtainableBuffIdArray);
-            //    datatosave = $"{@event.data_headers.servertime} {@event.data.chara_info.turn} {datatosave}";
-            //    LegendToSave.lastTurn = thisturn;
-            //    LegendToSave.lastDataToSave = datatosave;
-            //    AnsiConsole.MarkupLine(LegendToSave.lastDataToSave);
-            //}
+            <= 3 => "white",
+            4 => "yellow",
+            _ => "red"
+        };
 
-            var stage = GetCommandInfoStage_legend(@event);
-            if (stage == 0)
-                return;
-            // 载入剧本Buff数据csv
-            if (GameGlobal.LegendBuffInfo.Count == 0)
-                GameGlobal.LoadLegendBuffs();
+        builder.ScenarioPanels.Add(new(
+            "buff-period",
+            "心得周期",
+            new Markup($"心得回合周期 [{buffPeriodColor}]{buffPeriod}[/]/6"),
+            ratio: 3,
+            showHeader: true));
 
-            var layout = new Layout().SplitColumns(
-                new Layout("Main").Size(CommandInfoLayout.Current.MainSectionWidth).SplitRows(
-                    new Layout("体力干劲条").SplitColumns(
-                        new Layout("日期").Ratio(4),
-                        new Layout("总属性").Ratio(6),
-                        new Layout("体力").Ratio(6),
-                        new Layout("干劲").Ratio(3)).Size(3),
-                    new Layout("重要信息").Size(5),
-                    new Layout("剧本信息").SplitColumns(
-                        new Layout("心得周期").Ratio(3),
-                        new Layout("心得等级").Ratio(3),
-                        new Layout("心得颜色").Ratio(6)
-                        ).Size(3),
-                    //new Layout("分割", new Rule()).Size(1),
-                    new Layout("训练信息")  // size 20, 共约30行
-                    ).Ratio(4),
-                new Layout("Ext").Ratio(1)
-                );
-            var noTrainingTable = false;
-            var critInfos = new List<string>();
-            var turn = new TurnInfoLegend(@event.data);
-            var eventLegendDataset = @event.data.legend_data_set;
+        var gaugeCounts = turn.GaugeCounts;
+        builder.ScenarioPanels.Add(new(
+            "gauge-level",
+            "心得等级",
+            new Markup($"[cyan]{gaugeCounts[9046]}/8[/] [#00ff00]{gaugeCounts[9047]}/8[/] [#ff8080]{gaugeCounts[9048]}/8[/]"),
+            ratio: 3,
+            showHeader: true));
 
-            if (GameStats.currentTurn != turn.Turn - 1 //正常情况
-                && GameStats.currentTurn != turn.Turn //重复显示
-                && turn.Turn != 1 //第一个回合
-                )
-            {
-                GameStats.isFullGame = false;
-                critInfos.Add(string.Format(I18N_WrongTurnAlert, GameStats.currentTurn, turn.Turn));
-                EventLogger.Init(@event);
-            }
-            else if (turn.Turn == 1)
-            {
-                GameStats.isFullGame = true;
-                EventLogger.Init(@event);
-            }
+        var colorInfo = CreateBuffColorInfo(turn, dataSet);
+        builder.ScenarioPanels.Add(new(
+            "buff-color",
+            "心得颜色",
+            colorInfo,
+            ratio: 6,
+            showHeader: true));
+    }
 
-            //买技能，大师杯剧本年末比赛，会重复显示
-            if (@event.data.chara_info.playing_state != 1)
-            {
-                critInfos.Add(I18N_RepeatTurn);
-            }
-            else
-            {
-                //初始化TurnStats
-                GameStats.whichScenario = @event.data.chara_info.scenario_id;
-                GameStats.currentTurn = turn.Turn;
-                GameStats.stats[turn.Turn] = new TurnStats();
-                EventLogger.Update(@event);
-            }
-            var trainItems = new Dictionary<int, SingleModeCommandInfo>
-            {
-                { 101, @event.data.home_info.command_info_array[0] },
-                { 105, @event.data.home_info.command_info_array[1] },
-                { 102, @event.data.home_info.command_info_array[2] },
-                { 103, @event.data.home_info.command_info_array[3] },
-                { 106, @event.data.home_info.command_info_array[4] }
-            };
-            var trainStats = new TrainStats[5];
-            var turnStat = @event.data.chara_info.playing_state != 1 ? new TurnStats() : GameStats.stats[turn.Turn];
-            turnStat.motivation = @event.data.chara_info.motivation;
-            var failureRate = new Dictionary<int, int>();
+    static IRenderable CreateBuffColorInfo(TurnInfoLegend turn, Gallop.SingleModeLegendDataSet dataSet)
+    {
+        if (turn.Turn > 36 && dataSet.masterly_bonus_info is not null)
+        {
+            var mainColor =
+                dataSet.masterly_bonus_info.info_9046 is not null ? 1 :
+                dataSet.masterly_bonus_info.info_9047 is not null ? 2 :
+                dataSet.masterly_bonus_info.info_9048 is not null ? 3 : 0;
+            return new Markup($"{LegendColors.MarkupPrefix(mainColor)}主色：{LegendColors.Name(mainColor)}[/]");
+        }
 
-            // 总属性计算
-            var currentFiveValue = new int[]
-            {
-                @event.data.chara_info.speed,
-                @event.data.chara_info.stamina,
-                @event.data.chara_info.power ,
-                @event.data.chara_info.guts ,
-                @event.data.chara_info.wiz ,
-            };
-            var fiveValueMaxRevised = new int[]
-            {
-                ScoreUtils.ReviseOver1200(@event.data.chara_info.max_speed),
-                ScoreUtils.ReviseOver1200(@event.data.chara_info.max_stamina),
-                ScoreUtils.ReviseOver1200(@event.data.chara_info.max_power) ,
-                ScoreUtils.ReviseOver1200(@event.data.chara_info.max_guts) ,
-                ScoreUtils.ReviseOver1200(@event.data.chara_info.max_wiz) ,
-            };
-            var currentFiveValueRevised = currentFiveValue.Select(x => ScoreUtils.ReviseOver1200(x)).ToArray();
-            var totalValue = currentFiveValueRevised.Sum();
-            var totalValueWithPt = totalValue + @event.data.chara_info.skill_point;
+        var blueBuffCount = dataSet.buff_info_array.Count(x => x.buff_id / 1000 == 1);
+        var greenBuffCount = dataSet.buff_info_array.Count(x => x.buff_id / 1000 == 2);
+        var redBuffCount = dataSet.buff_info_array.Count(x => x.buff_id / 1000 == 3);
+        return new Markup($"当前心得颜色：[cyan]蓝{blueBuffCount}[/] [#00ff00]绿{greenBuffCount}[/] [#ff8080]红{redBuffCount}[/]");
+    }
 
-            for (var i = 0; i < 5; i++)
-            {
-                var trainId = GameGlobal.TrainIds[i];
-                failureRate[trainId] = trainItems[trainId].failure_rate;
-                var trainParams = new Dictionary<int, int>()
-                {
-                    {1,0},
-                    {2,0},
-                    {3,0},
-                    {4,0},
-                    {5,0},
-                    {30,0},
-                    {10,0},
-                };
-                foreach (var item in turn.GetCommonResponse().home_info.command_info_array)
-                {
-                    if (GameGlobal.ToTrainId.TryGetValue(item.command_id, out var value) && value == trainId)
-                    {
-                        foreach (var trainParam in item.params_inc_dec_info_array)
-                            trainParams[trainParam.target_type] += trainParam.value;
-                    }
-                }
+    static void AddTrainingCards(
+        LegendTrainingDisplayContext context,
+        LegendTrainingDisplayBuilder builder)
+    {
+        var maxScore = context.TrainStats.Count == 0 ? 0 : context.TrainStats.Max(x => x.FiveValueGain.Sum());
+        foreach (var command in context.Turn.CommandInfoArray)
+        {
+            var stats = context.TrainStats[command.TrainIndex - 1];
+            builder.TrainingCards.Add(CreateTrainingCard(context.Turn, command, stats, maxScore));
+        }
 
-                var stats = new TrainStats
-                {
-                    FailureRate = trainItems[trainId].failure_rate,
-                    VitalGain = trainParams[10]
-                };
-                if (turn.Vital + stats.VitalGain > turn.MaxVital)
-                    stats.VitalGain = turn.MaxVital - turn.Vital;
-                if (stats.VitalGain < -turn.Vital)
-                    stats.VitalGain = -turn.Vital;
-                stats.FiveValueGain = [trainParams[1], trainParams[2], trainParams[3], trainParams[4], trainParams[5]];
-                stats.PtGain = trainParams[30];
+        if (context.ResponseData.CharaInfo.chara_effect_id_array.Any(x => x == 104))
+            builder.ExtraRows.Add(new Text("团卡彩圈生效中"));
+    }
 
-                // 取上半数值
-                // cook_data_set.command_info_array和CommandInfo，SingleCommandInfo都不一样，只能直接取
-                // 目前放在1200减半之前，不知道对不对
-                var cookValueGainUpper = eventLegendDataset.command_info_array
-                    .FirstOrDefault(x => x.command_id == trainId || x.command_id == GameGlobal.XiahesuIds[trainId])?.params_inc_dec_info_array;
-                if (cookValueGainUpper != null)
-                {
-                    foreach (var item in cookValueGainUpper)
-                    {
-                        if (item.target_type == 30)
-                            stats.PtGain += item.value;
-                        else if (item.target_type <= 5)
-                            stats.FiveValueGain[item.target_type - 1] += item.value;
-                        else
-                            AnsiConsole.MarkupLine("[red]here[/]");
-                    }
-                }
+    static LegendTrainingCard CreateTrainingCard(
+        TurnInfoLegend turn,
+        LegendCommandInfo command,
+        TrainStats stats,
+        int maxScore)
+    {
+        var failureRate = stats.FailureRate switch
+        {
+            >= 40 => $"[red]({stats.FailureRate}%)[/]",
+            >= 20 => $"[darkorange]({stats.FailureRate}%)[/]",
+            > 0 => $"[yellow]({stats.FailureRate}%)[/]",
+            _ => string.Empty
+        };
+        var card = new LegendTrainingCard(command.CommandId, command.TrainIndex)
+        {
+            Title = $"{LegendDisplayText.TrainName(command.TrainIndex)}{failureRate}"
+        };
 
-                for (var j = 0; j < 5; j++)
-                    stats.FiveValueGain[j] = ScoreUtils.ReviseOver1200(turn.Stats[j] + stats.FiveValueGain[j]) - ScoreUtils.ReviseOver1200(turn.Stats[j]);
+        var currentStat = turn.StatsRevised[command.TrainIndex - 1];
+        var statUpToMax = turn.MaxStatsRevised[command.TrainIndex - 1] - currentStat;
+        card.AddRow(new Text(LegendDisplayText.CurrentRemainStat));
+        card.AddRow(new Markup($"{currentStat}:{statUpToMax switch
+        {
+            > 400 => $"{statUpToMax}",
+            > 200 => $"[yellow]{statUpToMax}[/]",
+            _ => $"[red]{statUpToMax}[/]"
+        }}"));
+        card.AddRule();
 
-                if (turn.Turn == 1)
-                {
-                    turnStat.trainLevel[i] = 1;
-                    turnStat.trainLevelCount[i] = 0;
-                }
-                else
-                {
-                    var lastTrainLevel = GameStats.stats[turn.Turn - 1] != null ? GameStats.stats[turn.Turn - 1].trainLevel[i] : 1;
-                    var lastTrainLevelCount = GameStats.stats[turn.Turn - 1] != null ? GameStats.stats[turn.Turn - 1].trainLevelCount[i] : 0;
+        var afterVital = stats.VitalGain + turn.Vital;
+        card.AddRow(new Markup(afterVital switch
+        {
+            < 30 => $"{LegendDisplayText.Vital}:[red]{afterVital}[/]/{turn.MaxVital}",
+            < 50 => $"{LegendDisplayText.Vital}:[darkorange]{afterVital}[/]/{turn.MaxVital}",
+            < 70 => $"{LegendDisplayText.Vital}:[yellow]{afterVital}[/]/{turn.MaxVital}",
+            _ => $"{LegendDisplayText.Vital}:[green]{afterVital}[/]/{turn.MaxVital}"
+        }));
 
-                    turnStat.trainLevel[i] = lastTrainLevel;
-                    turnStat.trainLevelCount[i] = lastTrainLevelCount;
-                    if (GameStats.stats[turn.Turn - 1] != null &&
-                        GameStats.stats[turn.Turn - 1].playerChoice == GameGlobal.TrainIds[i] &&
-                        !GameStats.stats[turn.Turn - 1].isTrainingFailed &&
-                        !((turn.Turn - 1 >= 37 && turn.Turn - 1 <= 40) || (turn.Turn - 1 >= 61 && turn.Turn - 1 <= 64))
-                        )//上回合点的这个训练，计数+1
-                        turnStat.trainLevelCount[i] += 1;
-                    if (turnStat.trainLevelCount[i] >= 4)
-                    {
-                        turnStat.trainLevelCount[i] -= 4;
-                        turnStat.trainLevel[i] += 1;
-                    }
-                    //检查是否有剧本全体训练等级+1
-                    if (turn.Turn == 25 || turn.Turn == 37 || turn.Turn == 49)
-                        turnStat.trainLevelCount[i] += 4;
-                    if (turnStat.trainLevelCount[i] >= 4)
-                    {
-                        turnStat.trainLevelCount[i] -= 4;
-                        turnStat.trainLevel[i] += 1;
-                    }
+        var gaugeGain = command.GaugeGain;
+        var gaugeId = gaugeGain.LegendId - 9045;
+        var currentGauge = turn.GaugeCounts[gaugeGain.LegendId];
+        var gaugeText = $"{LegendColors.MarkupPrefix(gaugeId)}{LegendColors.Name(gaugeId)} {currentGauge}+{gaugeGain.GainGauge}[/]";
+        card.AddRow(new Markup($"Lv{command.TrainLevel} | {gaugeText}"));
+        card.AddRule();
 
-                    if (turnStat.trainLevel[i] >= 5)
-                    {
-                        turnStat.trainLevel[i] = 5;
-                        turnStat.trainLevelCount[i] = 0;
-                    }
+        var score = stats.FiveValueGain.Sum();
+        card.AddRow(new Markup(score == maxScore
+            ? $"{LegendDisplayText.StatSimple}:[aqua]{score}[/]|Pt:{stats.PtGain}"
+            : $"{LegendDisplayText.StatSimple}:{score}|Pt:{stats.PtGain}"));
 
-                    var trainlv = @event.data.chara_info.training_level_info_array.First(x => x.command_id == GameGlobal.TrainIds[i]).level;
-                    if (turnStat.trainLevel[i] != trainlv && stage == 2)
-                    {
-                        //可能是半途开启小黑板，也可能是有未知bug
-                        critInfos.Add($"[red]警告：训练等级预测错误，预测{GameGlobal.TrainIds[i]}为lv{turnStat.trainLevel[i]}(+{turnStat.trainLevelCount[i]})，实际为lv{trainlv}[/]");
-                        turnStat.trainLevel[i] = trainlv;
-                        turnStat.trainLevelCount[i] = 0;//如果是半途开启小黑板，则会在下一次升级时变成正确的计数
-                    }
-                }
+        foreach (var trainingPartner in command.TrainingPartners)
+        {
+            card.AddRow(new Markup(trainingPartner.Name));
+            if (trainingPartner.Shining)
+                card.BorderColor = Color.LightGreen;
+        }
 
-                trainStats[i] = stats;
-            }
-            if (stage == 2)
-            {
-                // 把训练等级信息更新到GameStats
-                turnStat.fiveTrainStats = trainStats;
-                GameStats.stats[turn.Turn] = turnStat;
-            }
+        for (var i = 5 - command.TrainingPartners.Count; i > 0; i--)
+            card.AddRow(new Text(string.Empty));
+        card.AddRule();
 
-            //训练或比赛阶段
-            if (stage == 2)
-            {
-                var grids = new Grid();
-                grids.AddColumns(6);
+        return card;
+    }
 
-                var failureRateStr = new string[5];
-                //失败率>=40%标红、>=20%(有可能大失败)标DarkOrange、>0%标黄
-                for (var i = 0; i < 5; i++)
-                {
-                    var thisFailureRate = failureRate[GameGlobal.TrainIds[i]];
-                    failureRateStr[i] = thisFailureRate switch
-                    {
-                        >= 40 => $"[red]({thisFailureRate}%)[/]",
-                        >= 20 => $"[darkorange]({thisFailureRate}%)[/]",
-                        > 0 => $"[yellow]({thisFailureRate}%)[/]",
-                        _ => string.Empty
-                    };
-                }
-                var commands = turn.CommandInfoArray.Select(command =>
-                {
-                    var table = new Table()
-                    .AddColumn(command.TrainIndex switch
-                    {
-                        1 => $"{I18N_Speed}{failureRateStr[0]}",
-                        2 => $"{I18N_Stamina}{failureRateStr[1]}",
-                        3 => $"{I18N_Power}{failureRateStr[2]}",
-                        4 => $"{I18N_Nuts}{failureRateStr[3]}",
-                        5 => $"{I18N_Wiz}{failureRateStr[4]}"
-                    });
+    static void AddNonTrainingRows(
+        LegendTrainingDisplayContext context,
+        LegendTrainingDisplayBuilder builder)
+    {
+        builder.ExtraRows.Add(new Text($"非训练阶段: {LegendDisplayText.StageName(context.ResponseData.Stage)}"));
+        if (context.ResponseData.Stage != LegendScenarioStage.BuffSelection)
+            return;
 
-                    var currentStat = turn.StatsRevised[command.TrainIndex - 1];
-                    var statUpToMax = turn.MaxStatsRevised[command.TrainIndex - 1] - currentStat;
-                    table.AddRow(I18N_CurrentRemainStat);
-                    table.AddRow($"{currentStat}:{statUpToMax switch
-                    {
-                        > 400 => $"{statUpToMax}",
-                        > 200 => $"[yellow]{statUpToMax}[/]",
-                        _ => $"[red]{statUpToMax}[/]"
-                    }}");
-                    table.AddRow(new Rule());
+        AddSelectionCards(context, builder);
+    }
 
-                    var afterVital = trainStats[command.TrainIndex - 1].VitalGain + turn.Vital;
-                    table.AddRow(afterVital switch
-                    {
-                        < 30 => $"{I18N_Vital}:[red]{afterVital}[/]/{turn.MaxVital}",
-                        < 50 => $"{I18N_Vital}:[darkorange]{afterVital}[/]/{turn.MaxVital}",
-                        < 70 => $"{I18N_Vital}:[yellow]{afterVital}[/]/{turn.MaxVital}",
-                        _ => $"{I18N_Vital}:[green]{afterVital}[/]/{turn.MaxVital}"
-                    });
+    static void AddSelectionCards(
+        LegendTrainingDisplayContext context,
+        LegendTrainingDisplayBuilder builder)
+    {
+        GameGlobal.LoadLegendBuffs();
+        var buffInfoList = context.DataSet.obtainable_buff_id_array
+            .Select(RequireLegendBuff)
+            .OrderBy(x => x.color)
+            .ThenByDescending(x => x.rank)
+            .ThenBy(x => x.buffId)
+            .ToArray();
 
-                    var gainGauge = turn.CommandGauges[command.CommandId];
-                    //gainGauge.Gauge += turn.GaugeCountDictonary[gainGauge.Legend];
-                    var preStar = StarCount(turn.GaugeCountDictonary[gainGauge.Legend]);
-                    var starDiff = StarCount(gainGauge.Gauge) - preStar;
-                    var gaugeId = gainGauge.Legend - 9045;
-                    var gaugeText = $"{mainColorText(gaugeId)}{mainColorName(gaugeId)} {turn.GaugeCountDictonary[gainGauge.Legend]}+{gainGauge.Gauge}[/]";
-                    table.AddRow($"Lv{command.TrainLevel} | {gaugeText}");
-                    table.AddRow(new Rule());
-
-                    var stats = trainStats[command.TrainIndex - 1];
-                    var score = stats.FiveValueGain.Sum();
-                    if (score == trainStats.Max(x => x.FiveValueGain.Sum()))
-                        table.AddRow($"{I18N_StatSimple}:[aqua]{score}[/]|Pt:{stats.PtGain}");
-                    else
-                        table.AddRow($"{I18N_StatSimple}:{score}|Pt:{stats.PtGain}");
-
-                    foreach (var trainingPartner in command.TrainingPartners)
-                    {
-                        table.AddRow(trainingPartner.Name);
-                        if (trainingPartner.Shining)
-                            table.BorderColor(Color.LightGreen);
-                    }
-                    for (var i = 5 - command.TrainingPartners.Count(); i > 0; i--)
-                    {
-                        table.AddRow(string.Empty);
-                    }
-                    table.AddRow(new Rule());
-
-                    return new Padder(table).Padding(0, 0, 0, 0);
-                }); // foreach command
-                grids.AddRow([.. commands]);
-                layout["训练信息"].Update(grids);
-
-                //女神情热状态，不统计女神召唤次数
-                if (@event.data.chara_info.chara_effect_id_array.Any(x => x == 104))
-                {
-                    turnStat.legend_friendClickEventCountConcerned = false;
-                    turnStat.legend_isEffect104 = true;
-                    //统计一下女神情热持续了几回合
-                    var continuousTurnNum = 0;
-                    for (var i = turn.Turn; i >= 1; i--)
-                    {
-                        if (GameStats.stats[i] == null || !GameStats.stats[i].legend_isEffect104)
-                            break;
-                        continuousTurnNum++;
-                    }
-                    AnsiConsole.MarkupLine($"团卡彩圈已持续[green]{continuousTurnNum}[/]回合");
-                }
-            }
-            else
-            {
-                var grids = new Grid();
-                grids.AddColumns(1);
-                grids.AddRow([$"非训练阶段，stage={stage}"]);
-                layout["训练信息"].Update(grids);
-                noTrainingTable = true;
-            }
-
-            // 额外信息
-            var exTable = new Table().AddColumn("Extras");
-            exTable.HideHeaders();
-            // 计算连续事件表现
-            var eventPerf = EventLogger.PrintCardEventPerf(@event.data.chara_info.scenario_id);
-            if (eventPerf.Count > 0)
-            {
-                exTable.AddRow(new Rule());
-                foreach (var row in eventPerf)
-                    exTable.AddRow(new Markup(row));
-            }
-            //exTable.AddRow("asdasdasd");
-
-            layout["日期"].Update(new Panel($"{turn.Year}{I18N_Year} {turn.Month}{I18N_Month}{turn.HalfMonth}").Expand());
-            layout["总属性"].Update(new Panel($"[cyan]总属性: {totalValue}[/]").Expand());
-            layout["体力"].Update(new Panel($"{I18N_Vital}: [green]{turn.Vital}[/]/{turn.MaxVital}").Expand());
-            layout["干劲"].Update(new Panel(@event.data.chara_info.motivation switch
-            {
-                // 换行分裂和箭头符号有关，去掉
-                5 => $"[green]{I18N_MotivationBest}[/]",
-                4 => $"[yellow]{I18N_MotivationGood}[/]",
-                3 => $"[red]{I18N_MotivationNormal}[/]",
-                2 => $"[red]{I18N_MotivationBad}[/]",
-                1 => $"[red]{I18N_MotivationWorst}[/]"
-            }).Expand());
-
-            var availableTrainingCount = @event.data.home_info.command_info_array.Count(x => x.is_enable == 1);
-            if (availableTrainingCount <= 1)
-            {
-                critInfos.Add("[aqua]非训练回合[/]");
-            }
-            layout["重要信息"].Update(new Panel(string.Join(Environment.NewLine, critInfos)).Expand());
-
-            var buffPeriod = (turn.Turn - 1) % 6 + 1;
-            var buffPeriodColor = buffPeriod switch
-            {
-                1 => "white",
-                2 => "white",
-                3 => "white",
-                4 => "yellow",   // 等于 4 显示黄色
-                _ => "red"       // 其他情况（5 或 6）显示红色
-            };
-            layout["心得周期"].Update(new Panel($"心得回合周期 [{buffPeriodColor}]{buffPeriod}[/]/6").Expand());
-
-            // 改为一直显示
-            var blueBuffCount = @event.data.legend_data_set.buff_info_array.Count(x => x.buff_id / 1000 == 1);
-            var greenBuffCount = @event.data.legend_data_set.buff_info_array.Count(x => x.buff_id / 1000 == 2);
-            var redBuffCount = @event.data.legend_data_set.buff_info_array.Count(x => x.buff_id / 1000 == 3);
-            layout["心得颜色"].Update(new Panel($"当前心得颜色：[cyan]蓝{blueBuffCount}[/] [#00ff00]绿{greenBuffCount}[/] [#ff8080]红{redBuffCount}[/]").Expand());
-
-            if (turn.Turn > 36)
-            {
-                var mainColor =
-                 @event.data.legend_data_set.masterly_bonus_info.info_9046 != null ? 1 :
-                 @event.data.legend_data_set.masterly_bonus_info.info_9047 != null ? 2 :
-                 @event.data.legend_data_set.masterly_bonus_info.info_9048 != null ? 3 : 0;
-
-                layout["心得颜色"].Update(new Panel($"{mainColorText(mainColor)}主色：{mainColorName(mainColor)}[/]").Expand());
-            }
-
-            var gauge_array = @event.data.legend_data_set.gauge_count_array.ToDictionary(x => x.legend_id, x => x.count);
-            layout["心得等级"].Update(new Panel($"[cyan]{gauge_array[9046]}/8[/] [#00ff00]{gauge_array[9047]}/8[/] [#ff8080]{gauge_array[9048]}/8[/]").Expand());
-
-            layout["Ext"].Update(exTable);
-
-            GameStats.Print();
-
-            AnsiConsole.Write(layout);
-            // 光标倒转一点
-            if (noTrainingTable)
-                AnsiConsole.Cursor.SetPosition(0, 15);
-            else
-                AnsiConsole.Cursor.SetPosition(0, 31);
-
-            if (stage == 5)//选buff阶段
-            {
-                AnsiConsole.MarkupLine("选心得:");
-                var obtainableBuffIdArray = @event.data.legend_data_set.obtainable_buff_id_array;
-                var buffInfoList = obtainableBuffIdArray
-                    .Select(id => GameGlobal.LegendBuffInfo.Find(x => x.buffId == id))
-                    .Where(x => x != null)
-                    .OrderBy(x => x.color)
-                    .ThenBy(x => -x.rank)
-                    .ThenBy(x => x.buffId)
-                    .ToList();
-                foreach (var b in buffInfoList)
-                {
-                    AnsiConsole.MarkupLine($"{mainColorText(b.color + 1)}☆{b.rank} {b.name} - {b.cn_effect}[/]");
-                }
-            }
-
-            string GaugeColor((int, int) gain) => gain.Item1 switch
-            {
-                9046 => $"[#42AEF7]{gain.Item2}[/]",
-                9047 => $"[#0BCC58]{gain.Item2}[/]",
-                9048 => $"[#F765A4]{gain.Item2}[/]"
-            };
-            string mainColorText(int which) => which switch
-            {
-                1 => "[cyan]",
-                2 => "[#00ff00]",
-                3 => "[#ff8080]",
-                _ => "[#ffff00]"
-            };
-            string mainColorName(int which) => which switch
-            {
-                1 => "蓝",
-                2 => "绿",
-                3 => "红",
-                _ => "??"
-            };
-            int StarCount(int gauge) => gauge switch
-            {
-                8 => 3,
-                >= 4 => 2,
-                >= 2 => 1,
-                _ => 0
-            };
+        var ordinalsByColor = new Dictionary<LegendBuffColor, int>();
+        foreach (var buff in buffInfoList)
+        {
+            var color = ToBuffColor(buff.color);
+            var ordinal = ordinalsByColor.GetValueOrDefault(color) + 1;
+            ordinalsByColor[color] = ordinal;
+            builder.SelectionCards.Add(CreateSelectionCard(buff, color, ordinal));
         }
     }
+
+    static LegendSelectionCard CreateSelectionCard(LegendBuff buff, LegendBuffColor color, int ordinalWithinColor)
+    {
+        return new(
+            buff.buffId,
+            color,
+            ordinalWithinColor,
+            buff.name,
+            buff.cn_effect,
+            buff.rank);
+    }
+
+    static LegendBuff RequireLegendBuff(int buffId)
+        => GameGlobal.LegendBuffInfo.FirstOrDefault(x => x.buffId == buffId)
+            ?? throw new InvalidDataException($"legend_buff.csv 缺少 buffId={buffId} 的心得数据。");
+
+    static LegendBuffColor ToBuffColor(int color)
+        => color switch
+        {
+            0 => LegendBuffColor.Blue,
+            1 => LegendBuffColor.Green,
+            2 => LegendBuffColor.Red,
+            _ => throw new InvalidDataException($"legend_buff.csv 包含未知心得颜色: color={color}")
+        };
+}
+
+internal static class LegendTrainingDisplayRenderer
+{
+    public static IRenderable Render(LegendTrainingDisplayBuilder builder)
+    {
+        var layout = new Layout().SplitColumns(
+            new Layout("Main").Size(CommandInfoLayout.Current.MainSectionWidth).SplitRows(
+                BuildPanelRow("体力干劲条", builder.HeaderPanels, showHeaders: false).Size(3),
+                new Layout("重要信息").Size(5),
+                BuildPanelRow("剧本信息", builder.ScenarioPanels, showHeaders: true).Size(3),
+                new Layout("训练信息")).Ratio(4),
+            new Layout("Ext").Ratio(1));
+
+        layout["重要信息"].Update(new Panel(BuildRows(builder.ImportantRows)).Expand());
+        layout["训练信息"].Update(BuildMainArea(builder));
+        layout["Ext"].Update(BuildExtraTable(builder.ExtraRows));
+        return layout;
+    }
+
+    static Layout BuildPanelRow(
+        string name,
+        IReadOnlyList<LegendDisplayPanel> panels,
+        bool showHeaders)
+    {
+        var row = new Layout(name);
+        var children = panels.Count == 0
+            ? [new Layout("empty").Ratio(1)]
+            : panels.Select(x => new Layout(x.Key).Ratio(x.Ratio)).ToArray();
+        row.SplitColumns(children);
+
+        foreach (var panel in panels)
+        {
+            var panelView = new Panel(panel.Content).Expand();
+            if (showHeaders && panel.ShowHeader)
+                panelView.Header(panel.Title);
+            row[panel.Key].Update(panelView);
+        }
+
+        return row;
+    }
+
+    static IRenderable BuildRows(IReadOnlyList<IRenderable> rows)
+    {
+        if (rows.Count == 0)
+            return new Text(string.Empty);
+
+        var table = new Table();
+        table.HideHeaders();
+        table.NoBorder();
+        table.AddColumn(string.Empty);
+        foreach (var row in rows)
+            table.AddRow(row);
+        return table;
+    }
+
+    static IRenderable BuildMainArea(LegendTrainingDisplayBuilder builder)
+    {
+        if (builder.TrainingCards.Count != 0)
+            return BuildTrainingGrid(builder.TrainingCards);
+        if (builder.SelectionCards.Count != 0)
+            return BuildSelectionList(builder.SelectionCards);
+        return new Text("非训练阶段");
+    }
+
+    static IRenderable BuildTrainingGrid(IReadOnlyList<LegendTrainingCard> cards)
+    {
+        if (cards.Count == 0)
+            return new Text("非训练阶段");
+
+        var grid = new Grid();
+        grid.AddColumns(Math.Max(6, cards.Count));
+        foreach (var column in grid.Columns)
+            column.Padding = new Padding(0, 0, 0, 0);
+
+        grid.AddRow([.. cards.Select(x => new Padder(BuildTrainingTable(x)).Padding(0, 0, 0, 0))]);
+        return grid;
+    }
+
+    static Table BuildTrainingTable(LegendTrainingCard card)
+    {
+        var table = new Table().AddColumn(card.Title);
+        foreach (var row in card.Rows)
+            table.AddRow(row);
+
+        if (card.BorderColor is { } borderColor)
+            table.BorderColor(borderColor);
+
+        return table;
+    }
+
+    static IRenderable BuildSelectionList(IReadOnlyList<LegendSelectionCard> cards)
+    {
+        var table = new Table();
+        table.HideHeaders();
+        table.NoBorder();
+        table.AddColumn(string.Empty);
+        foreach (var card in cards)
+            table.AddRow(new Padder(BuildSelectionPanel(card)).Padding(0, 0, 0, 0));
+
+        return table;
+    }
+
+    static Panel BuildSelectionPanel(LegendSelectionCard card)
+    {
+        var panel = new Panel(new Markup(BuildSelectionLine(card)));
+        panel.BorderColor(card.BorderColor ?? LegendColors.BorderColor(card.Color));
+        return panel;
+    }
+
+    static string BuildSelectionLine(LegendSelectionCard card)
+    {
+        var color = LegendColors.MarkupPrefix(card.Color);
+        var icon = TruncateDisplay($"● ★{card.Rank}", 6);
+        var label = TruncateDisplay(card.SelectionLabel, 13);
+        var title = TruncateDisplay(card.Title, 12);
+        var effect = TruncateDisplay(card.Effect, 12);
+        var extra = TruncateDisplay(
+            string.Join(
+                " | ",
+                card.Rows
+                    .Select(RenderInlineText)
+                    .Select(x => CompactSelectionInlineText(card, x))
+                    .Where(x => x.Length != 0)),
+            38);
+        var extraText = extra.Length == 0 ? string.Empty : $"  [grey]{Markup.Escape(extra)}[/]";
+
+        return $"{color}{Markup.Escape(icon)} {Markup.Escape(label)}[/]  [bold]{Markup.Escape(title)}[/]  {Markup.Escape(effect)}{extraText}  {color}▶[/]";
+    }
+
+    static string CompactSelectionInlineText(LegendSelectionCard card, string text)
+    {
+        var separatorIndex = text.IndexOfAny([':', '：']);
+        if (separatorIndex < 0)
+            return text;
+
+        var key = text[..separatorIndex].Trim();
+        var value = text[(separatorIndex + 1)..].Trim();
+        if (key == "AI评分")
+            return $"AI评分:{value}";
+
+        if (key != "AI建议")
+            return text;
+
+        if (value.StartsWith(card.SelectionLabel, StringComparison.Ordinal))
+            value = value[card.SelectionLabel.Length..].Trim();
+
+        var nameStart = value.IndexOf('（');
+        var nameEnd = nameStart < 0 ? -1 : value.IndexOf('）', nameStart + 1);
+        if (nameStart >= 0 && nameEnd > nameStart)
+        {
+            var name = value[(nameStart + 1)..nameEnd].Trim();
+            var suffix = value[(nameEnd + 1)..].Trim();
+            value = suffix.Length == 0 ? name : $"{name} {suffix}";
+        }
+
+        return $"AI建议:{value}";
+    }
+
+    static string TruncateDisplay(string text, int maxWidth)
+    {
+        if (DisplayWidth(text) <= maxWidth)
+            return text;
+
+        var builder = new StringBuilder();
+        var width = 0;
+        foreach (var ch in text)
+        {
+            var nextWidth = DisplayWidth(ch);
+            if (width + nextWidth > maxWidth - 1)
+                break;
+
+            builder.Append(ch);
+            width += nextWidth;
+        }
+
+        return builder.Append('…').ToString();
+    }
+
+    static int DisplayWidth(string text)
+    {
+        var width = 0;
+        foreach (var ch in text)
+            width += DisplayWidth(ch);
+        return width;
+    }
+
+    static int DisplayWidth(char ch) => ch <= 0x7f ? 1 : 2;
+
+    static string RenderInlineText(IRenderable row)
+    {
+        if (row is Rule)
+            return string.Empty;
+
+        var writer = new StringWriter();
+        var console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Out = new InlineConsoleOutput(writer),
+            ColorSystem = ColorSystemSupport.NoColors
+        });
+        console.Write(row);
+        return NormalizeInlineText(writer.ToString());
+    }
+
+    static string NormalizeInlineText(string text)
+    {
+        var builder = new StringBuilder(text.Length);
+        var previousWhitespace = false;
+        foreach (var ch in text)
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                previousWhitespace = true;
+                continue;
+            }
+
+            if (previousWhitespace && builder.Length != 0)
+                builder.Append(' ');
+            builder.Append(ch);
+            previousWhitespace = false;
+        }
+
+        return builder.ToString();
+    }
+
+    static IRenderable BuildExtraTable(IReadOnlyList<IRenderable> rows)
+    {
+        var table = new Table().AddColumn("Extras");
+        table.HideHeaders();
+        foreach (var row in rows)
+            table.AddRow(row);
+        return table;
+    }
+}
+
+sealed class InlineConsoleOutput(TextWriter writer) : IAnsiConsoleOutput
+{
+    public TextWriter Writer { get; } = writer;
+    public bool IsTerminal => false;
+    public int Width => 120;
+    public int Height => 1;
+
+    public void SetEncoding(Encoding encoding)
+    {
+    }
+}
+
+internal sealed class LegendDisplayPanel(
+    string key,
+    string title,
+    IRenderable content,
+    int ratio = 1,
+    bool showHeader = false)
+{
+    public string Key { get; } = key;
+    public string Title { get; set; } = title;
+    public IRenderable Content { get; set; } = content;
+    public int Ratio { get; set; } = ratio;
+    public bool ShowHeader { get; set; } = showHeader;
+}
+
+internal sealed class LegendTrainingCard(int commandId, int trainIndex)
+{
+    public int CommandId { get; } = commandId;
+    public int TrainIndex { get; } = trainIndex;
+    public string Title { get; set; } = commandId.ToString();
+    public List<IRenderable> Rows { get; } = [];
+    public Color? BorderColor { get; set; }
+
+    public void AddRow(IRenderable row) => Rows.Add(row);
+
+    public void AddRule() => Rows.Add(new Rule());
+}
+
+internal sealed class LegendSelectionCard(
+    int buffId,
+    LegendBuffColor color,
+    int ordinalWithinColor,
+    string title,
+    string effect,
+    int rank)
+{
+    public int BuffId { get; } = buffId;
+    public LegendBuffColor Color { get; } = color;
+    public int OrdinalWithinColor { get; } = ordinalWithinColor;
+    public string SelectionLabel { get; } = $"选{LegendColors.FullName(color)}第 {ordinalWithinColor} 个";
+    public string Title { get; set; } = title;
+    public string Effect { get; set; } = effect;
+    public int Rank { get; } = rank;
+    public List<IRenderable> Rows { get; } = [];
+    public Color? BorderColor { get; set; }
+
+    public void AddRow(IRenderable row) => Rows.Add(row);
+
+    public void AddRule() => Rows.Add(new Rule());
+}
+
+internal static class LegendColors
+{
+    public static string MarkupPrefix(int which) => which switch
+    {
+        1 => "[cyan]",
+        2 => "[#00ff00]",
+        3 => "[#ff8080]",
+        _ => "[#ffff00]"
+    };
+
+    public static string MarkupPrefix(LegendBuffColor color)
+        => MarkupPrefix((int)color + 1);
+
+    public static Color BorderColor(LegendBuffColor color) => color switch
+    {
+        LegendBuffColor.Blue => Color.Blue,
+        LegendBuffColor.Green => Color.Green,
+        LegendBuffColor.Red => Color.Red,
+        _ => Color.Yellow
+    };
+
+    public static string Name(int which) => which switch
+    {
+        1 => "蓝",
+        2 => "绿",
+        3 => "红",
+            _ => "??"
+    };
+
+    public static string FullName(LegendBuffColor color) => color switch
+    {
+        LegendBuffColor.Blue => "蓝色",
+        LegendBuffColor.Green => "绿色",
+        LegendBuffColor.Red => "红色",
+        _ => throw new InvalidDataException($"未知心得颜色: {color}")
+    };
 }

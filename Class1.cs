@@ -1,81 +1,348 @@
-﻿using Newtonsoft.Json.Linq;
+using Gallop;
+using Gallop.Endpoints;
 using Spectre.Console;
-using System.Diagnostics;
-using System.IO.Compression;
-using UmamusumeResponseAnalyzer;
+using UmamusumeResponseAnalyzer.LiveDisplay;
 using UmamusumeResponseAnalyzer.Plugin;
 
-namespace LegendScenarioAnalyzer
+namespace LegendScenarioAnalyzer;
+
+public sealed class LegendScenarioAnalyzer : IPlugin
 {
-    public class LegendScenarioAnalyzer : IPlugin
+    const string WorkspaceTitle = "LegendScenarioAnalyzer";
+    const string TrainingPanelKey = "training";
+
+    ILiveDisplayOutput? liveDisplay;
+    LiveDisplayWorkspace? workspace;
+    bool checkedBootstrapWorkspace;
+    int currentTurn;
+
+    public string Name => "LegendScenarioAnalyzer";
+
+    public string Author => "UmaAi Team";
+
+    public string[] Targets => [];
+
+    public void Initialize(IPluginContext context)
     {
-        [PluginDescription("解析传奇杯回合信息")]
-        public string Name => "LegendScenarioAnalyzer";
-        public string Author => "UmaAi Team";
-        public string[] Targets => [];
-        public async Task UpdatePlugin(ProgressContext ctx)
+        liveDisplay = context.LiveDisplay;
+        workspace = LiveDisplay.CreateWorkspace(WorkspaceTitle);
+        checkedBootstrapWorkspace = false;
+        currentTurn = 0;
+    }
+
+    public void Dispose()
+    {
+        LegendTrainingDisplay.ClearCurrentDisplay(this);
+        workspace = null;
+        liveDisplay = null;
+    }
+
+    public Task UpdatePlugin(ProgressContext ctx) => Task.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.ChangeShortCut>(1)]
+    public ValueTask Analyze(SingleModeLegendChangeShortCutResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                homeInfo: null,
+                data.legend_data_set,
+                data.unchecked_event_array)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.Load>(1)]
+    public ValueTask Analyze(SingleModeLegendLoadResponse response)
+    {
+        if (response.data is not { } data || data.single_mode_load_common is not { } loadCommon)
+            return ValueTask.CompletedTask;
+
+        return AnalyzeLegendResponse(
+            response,
+            loadCommon.chara_info,
+            loadCommon.home_info,
+            data.legend_data_set,
+            loadCommon.unchecked_event_array,
+            loadCommon.race_start_info);
+    }
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.CheckEvent>(1)]
+    public ValueTask Analyze(SingleModeLegendCheckEventResponse response)
+    {
+        if (response.data is not { } data)
+            return ValueTask.CompletedTask;
+
+        return AnalyzeLegendResponse(
+            response,
+            data.chara_info,
+            data.home_info,
+            data.legend_data_set,
+            data.unchecked_event_array,
+            data.race_start_info);
+    }
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.CmEnd>(1)]
+    public ValueTask Analyze(SingleModeLegendCmEndResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                homeInfo: null,
+                data.legend_data_set,
+                data.unchecked_event_array)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.Continue>(1)]
+    public ValueTask Analyze(SingleModeLegendContinueResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                data.home_info,
+                data.legend_data_set,
+                data.unchecked_event_array,
+                data.race_start_info)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.ExecCommand>(1)]
+    public ValueTask Analyze(SingleModeLegendExecCommandResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                data.home_info,
+                data.legend_data_set,
+                data.unchecked_event_array)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.FinishClawCrane>(1)]
+    public ValueTask Analyze(SingleModeLegendFinishClawCraneResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                homeInfo: null,
+                data.legend_data_set,
+                data.unchecked_event_array)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.GainSkills>(1)]
+    public ValueTask Analyze(SingleModeLegendGainSkillsResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                data.home_info,
+                data.legend_data_set)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.LegendRaceContinue>(1)]
+    public ValueTask Analyze(SingleModeLegendLegendRaceContinueResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                data.home_info,
+                data.legend_data_set,
+                raceStartInfo: data.race_start_info)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.LegendRaceEnd>(1)]
+    public ValueTask Analyze(SingleModeLegendLegendRaceEndResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                homeInfo: null,
+                data.legend_data_set)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.LegendRaceEntry>(1)]
+    public ValueTask Analyze(SingleModeLegendLegendRaceEntryResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                homeInfo: null,
+                data.legend_data_set,
+                raceStartInfo: data.race_start_info)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.LegendRaceOut>(1)]
+    public ValueTask Analyze(SingleModeLegendLegendRaceOutResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                homeInfo: null,
+                data.legend_data_set,
+                data.unchecked_event_array)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.LegendRaceStart>(1)]
+    public ValueTask Analyze(SingleModeLegendLegendRaceStartResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                homeInfo: null,
+                data.legend_data_set,
+                raceStartInfo: data.race_start_info)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.PopularityEnd>(1)]
+    public ValueTask Analyze(SingleModeLegendPopularityEndResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                data.home_info,
+                data.legend_data_set,
+                data.unchecked_event_array)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.RaceEnd>(1)]
+    public ValueTask Analyze(SingleModeLegendRaceEndResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                data.home_info,
+                data.legend_data_set)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.RaceEntry>(1)]
+    public ValueTask Analyze(SingleModeLegendRaceEntryResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                data.home_info,
+                data.legend_data_set,
+                data.unchecked_event_array,
+                data.race_start_info)
+            : ValueTask.CompletedTask;
+
+    [ResponseAnalyzer<GameApi.SingleModeLegend.RaceOut>(1)]
+    public ValueTask Analyze(SingleModeLegendRaceOutResponse response)
+        => response.data is { } data
+            ? AnalyzeLegendResponse(
+                response,
+                data.chara_info,
+                data.home_info,
+                data.legend_data_set,
+                data.unchecked_event_array)
+            : ValueTask.CompletedTask;
+
+    ValueTask AnalyzeLegendResponse(
+        object response,
+        SingleModeChara charaInfo,
+        SingleModeHomeInfo? homeInfo,
+        SingleModeLegendDataSet? dataSet,
+        SingleModeEventInfo[]? uncheckedEventArray = null,
+        SingleRaceStartInfo? raceStartInfo = null)
+        => AnalyzeLegendResponse(new(
+            response,
+            charaInfo,
+            homeInfo,
+            dataSet,
+            uncheckedEventArray,
+            raceStartInfo));
+
+    ValueTask AnalyzeLegendResponse(LegendScenarioResponseData data)
+    {
+        if (!CanRenderLegendResponse(data))
+            return ValueTask.CompletedTask;
+
+        var turn = new TurnInfoLegend(data);
+        var trainStats = LegendTrainingStatsCalculator.CreateTrainStats(turn);
+        var context = new LegendTrainingDisplayContext(data, turn, trainStats, currentTurn);
+
+        if (data.Stage == LegendScenarioStage.Training)
+            currentTurn = turn.Turn;
+
+        LegendTrainingDisplay.SetCurrentDisplay(this, extraModifier => RenderTrainingDisplay(context, extraModifier));
+        RenderTrainingDisplay(context, extraModifier: null);
+        return ValueTask.CompletedTask;
+    }
+
+    void RenderTrainingDisplay(
+        LegendTrainingDisplayContext context,
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>? extraModifier)
+    {
+        var builder = LegendTrainingDisplayBuilder.CreateDefault(context);
+        ApplyDisplayModifiers(context, builder);
+        if (extraModifier is not null)
+            ApplyDisplayModifier(context, builder, extraModifier);
+
+        var content = LegendTrainingDisplayRenderer.Render(builder);
+        SwitchFromBootstrapOnFirstActivation();
+        LiveDisplay.SetPanel(Workspace, TrainingPanelKey, "传奇杯训练", content, fullBleed: true);
+    }
+
+    void ApplyDisplayModifiers(
+        LegendTrainingDisplayContext context,
+        LegendTrainingDisplayBuilder builder)
+    {
+        foreach (var modifier in LegendTrainingDisplayRegistry.Snapshot())
+            ApplyDisplayModifier(context, builder, modifier);
+    }
+
+    void ApplyDisplayModifier(
+        LegendTrainingDisplayContext context,
+        LegendTrainingDisplayBuilder builder,
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier)
+    {
+        try
         {
-            var progress = ctx.AddTask($"[[{Name}]] 更新");
-
-            using var client = new HttpClient();
-            using var resp = await client.GetAsync($"https://api.github.com/repos/URA-Plugins/{Name}/releases/latest");
-            var json = await resp.Content.ReadAsStringAsync();
-            var jo = JObject.Parse(json);
-
-            var isLatest = ("v" + ((IPlugin)this).Version.ToString()).Equals("v" + jo["tag_name"]?.ToString());
-            if (isLatest)
-            {
-                progress.Increment(progress.MaxValue);
-                progress.StopTask();
-                return;
-            }
-            progress.Increment(25);
-
-            var downloadUrl = jo["assets"][0]["browser_download_url"].ToString();
-            if (Config.Updater.IsGithubBlocked && !Config.Updater.ForceUseGithubToUpdate)
-            {
-                downloadUrl = downloadUrl.Replace("https://", "https://gh.shuise.dev/");
-            }
-            using var msg = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
-            using var stream = await msg.Content.ReadAsStreamAsync();
-            var buffer = new byte[8192];
-            while (true)
-            {
-                var read = await stream.ReadAsync(buffer);
-                if (read == 0)
-                    break;
-                progress.Increment(read / msg.Content.Headers.ContentLength ?? 1 * 0.5);
-            }
-            using var archive = new ZipArchive(stream);
-            archive.ExtractToDirectory(Path.Combine("Plugins", Name), true);
-            progress.Increment(25);
-
-            progress.StopTask();
+            modifier(context, new(builder));
         }
-
-        public void Initialize()
+        catch (Exception ex)
         {
-            Trace.WriteLine(Thread.CurrentThread.CurrentCulture);
-            Trace.WriteLine(Thread.CurrentThread.CurrentUICulture);
-            i18n.Game.Culture = Thread.CurrentThread.CurrentCulture;
-            Trace.WriteLine(i18n.Game.I18N_Speed);
-            Trace.WriteLine(i18n.Game.Culture);
-            Trace.WriteLine(i18n.Game.ResourceManager.GetString("I18N_Grass", Thread.CurrentThread.CurrentCulture));
-        }
-        [Analyzer(priority: 1)]
-        public static void Analyze(JObject jo)
-        {
-            if (!jo.HasCharaInfo()) return;
-            if (jo["data"] is null || jo["data"] is not JObject data) return;
-            if (data["chara_info"] is null || data["chara_info"] is not JObject chara_info) return;
-            if (chara_info["scenario_id"].ToInt() != 10) return;
-            var state = chara_info["state"].ToInt();
-            if (chara_info != null && data["home_info"]?["command_info_array"] != null && data["race_reward_info"].IsNull() && !(state is 2 or 3)) //根据文本简单过滤防止重复、异常输出
-            {
-                var @event = jo.ToObject<Gallop.SingleModeCheckEventResponse>();
-                if ((@event.data.unchecked_event_array != null && @event.data.unchecked_event_array.Length > 0) || @event.data.race_start_info != null) return;
-                LegendHandler.ParseLegendCommandInfo(@event);
-            }
+            LiveDisplay.Log(Workspace, $"Legend 训练显示 patch 执行失败: {ex.Message}", LiveDisplaySeverity.Error);
+#if DEBUG
+            throw;
+#endif
         }
     }
+
+    static bool CanRenderLegendResponse(LegendScenarioResponseData data)
+    {
+        if (data.CharaInfo is null || data.HomeInfo?.command_info_array is not { } homeCommands)
+            return false;
+        if (data.CharaInfo.state is 2 or 3 || data.RaceStartInfo is not null)
+            return false;
+        if (data.DataSet?.command_info_array is not { } legendCommands ||
+            data.DataSet.gauge_count_array is null ||
+            data.DataSet.buff_info_array is null)
+        {
+            return false;
+        }
+
+        if (data.Stage == LegendScenarioStage.None)
+            return false;
+
+        return TurnInfoLegend.BaseTrainIds.All(trainId =>
+            homeCommands.Any(command =>
+                TurnInfoLegend.ToTrainId.TryGetValue(command.command_id, out var baseTrainId)
+                && baseTrainId == trainId)
+            && legendCommands.Any(command =>
+                TurnInfoLegend.ToTrainId.TryGetValue(command.command_id, out var baseTrainId)
+                && baseTrainId == trainId));
+    }
+
+    void SwitchFromBootstrapOnFirstActivation()
+    {
+        if (checkedBootstrapWorkspace)
+            return;
+
+        checkedBootstrapWorkspace = true;
+        if (LiveDisplay.CurrentWorkspace?.Title == "启动")
+            LiveDisplay.SwitchWorkspace(Workspace);
+    }
+
+    ILiveDisplayOutput LiveDisplay => liveDisplay
+        ?? throw new InvalidOperationException("LegendScenarioAnalyzer 尚未初始化 LiveDisplay。");
+
+    LiveDisplayWorkspace Workspace => workspace
+        ?? throw new InvalidOperationException("LegendScenarioAnalyzer 尚未创建 LiveDisplay workspace。");
 }

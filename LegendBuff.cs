@@ -10,8 +10,8 @@ namespace LegendScenarioAnalyzer
     /// </summary>
     public class LegendBuff
     {
-        public string cn_effect { get; set; }
-        public string name { get; set; }
+        public string cn_effect { get; set; } = string.Empty;
+        public string name { get; set; } = string.Empty;
         [TypeConverter(typeof(IntNodeConverter))]
         public int rank { get; set; }    // 星数
         [TypeConverter(typeof(IntNodeConverter))]
@@ -46,7 +46,7 @@ namespace LegendScenarioAnalyzer
         public int fenShen { get; set; }  // 分身
         [TypeConverter(typeof(IntNodeConverter))]
         public int mood { get; set; }       // 心情        
-        public string note { get; set; }
+        public string note { get; set; } = string.Empty;
     }
 
     /// <summary>
