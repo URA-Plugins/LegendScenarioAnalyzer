@@ -65,22 +65,17 @@ namespace LegendScenarioAnalyzer
     public class BooleanNodeConverter : DefaultTypeConverter
     {
         public override object? ConvertFromString(string? text, IReaderRow row, MemberMapData memberMapData)
-        {
-            if (text == null)
-                return false;
-            else
-                return text.ToLower() == "true";
-        }
+            => string.Equals(text, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     public class IntNodeConverter : DefaultTypeConverter
     {
         public override object? ConvertFromString(string? text, IReaderRow row, MemberMapData memberMapData)
         {
-            if (text == null || text == "")
+            if (string.IsNullOrEmpty(text))
                 return 0;
-            else
-                return Int32.Parse(text);
+
+            return int.Parse(text);
         }
     }
 

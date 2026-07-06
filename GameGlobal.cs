@@ -155,7 +155,7 @@ namespace LegendScenarioAnalyzer
             { 3308, 55 },
             { 3309, 56 }
         }.ToFrozenDictionary();
-        public static List<LegendBuff> LegendBuffInfo = new List<LegendBuff>();
+        public static List<LegendBuff> LegendBuffInfo = [];
 
         public static void LoadLegendBuffs()
         {
