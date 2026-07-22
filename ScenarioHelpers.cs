@@ -1,6 +1,5 @@
 using System.Collections.Frozen;
 using Gallop;
-using Spectre.Console;
 using UmamusumeResponseAnalyzer;
 
 namespace LegendScenarioAnalyzer;
@@ -105,15 +104,10 @@ public sealed class TrainingPartner
 
         Priority = position is >= 1 and <= 6 ? 0 : 1;
         Shining = supportCard is not null && friendship >= 80 && supportCard.CanTriggerFriendshipTraining(trainingType);
-        var isFriendSupportCard = supportCard is not null && rawName.Contains("[友]", StringComparison.Ordinal);
-        var displayName = Markup.Escape(rawName);
-        if (isFriendSupportCard)
-            displayName = $"[lime]{displayName}[/]";
-        else if (Shining)
-            displayName = $"[aqua]{displayName}[/]";
-        Name = $"{displayName}{(friendship is > 0 and < 100 ? $"[red]{friendship}[/]" : string.Empty)}";
+        var displayName = rawName;
+        Name = $"{displayName}{(friendship is > 0 and < 100 ? $" {friendship}" : string.Empty)}";
         if (command.tips_event_partner_array.Contains(position))
-            Name = $"[red]![/]{Name}";
+            Name = $"!{Name}";
     }
 
     public int Priority { get; }
@@ -304,21 +298,21 @@ internal static class LegendDisplayText
         _ => throw new InvalidOperationException($"未知训练索引: {trainIndex}")
     };
 
-    public static string MotivationMarkup(int motivation) => motivation switch
+    public static string Motivation(int motivation) => motivation switch
     {
-        5 => $"[green]{MotivationBest}[/]",
-        4 => $"[yellow]{MotivationGood}[/]",
-        3 => $"[red]{MotivationNormal}[/]",
-        2 => $"[red]{MotivationBad}[/]",
-        1 => $"[red]{MotivationWorst}[/]",
+        5 => MotivationBest,
+        4 => MotivationGood,
+        3 => MotivationNormal,
+        2 => MotivationBad,
+        1 => MotivationWorst,
         _ => throw new InvalidOperationException($"未知干劲值: {motivation}")
     };
 
     public static string WrongTurnAlert(int previousTurn, int currentTurn) => Culture switch
     {
-        "zh-CN" => $"[red]警告：回合数不正确，上一个回合为{previousTurn}，当前回合为{currentTurn}[/]",
-        "ja-JP" => $"[red]警告：ターン数が正しくありません。前のターンは{previousTurn}、現在のターンは{currentTurn}です[/]",
-        _ => $"[red]Warning: Incorrect turn, the previous turn was {previousTurn}, the current turn is {currentTurn}[/]"
+        "zh-CN" => $"警告：回合数不正确，上一个回合为{previousTurn}，当前回合为{currentTurn}",
+        "ja-JP" => $"警告：ターン数が正しくありません。前のターンは{previousTurn}、現在のターンは{currentTurn}です",
+        _ => $"Warning: Incorrect turn, the previous turn was {previousTurn}, the current turn is {currentTurn}"
     };
 
     public static string StageName(LegendScenarioStage stage) => stage switch

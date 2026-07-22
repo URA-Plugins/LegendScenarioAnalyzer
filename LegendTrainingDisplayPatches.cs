@@ -1,6 +1,3 @@
-using Spectre.Console;
-using Spectre.Console.Rendering;
-
 namespace LegendScenarioAnalyzer;
 
 public sealed class LegendTrainingDisplayPatch
@@ -58,27 +55,20 @@ public sealed class LegendTrainingCardPatch
     public LegendTrainingCardPatch AddDescription(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        operations.Add(new TrainingCardAddRow(selector, new Text(text)));
+        operations.Add(new TrainingCardAddRow(selector, text));
         return this;
     }
 
     public LegendTrainingCardPatch AddText(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        operations.Add(new TrainingCardAddRow(selector, new Text(text)));
+        operations.Add(new TrainingCardAddRow(selector, text));
         return this;
     }
 
-    public LegendTrainingCardPatch AddMarkup(string markup)
+    public LegendTrainingCardPatch Highlight()
     {
-        ArgumentNullException.ThrowIfNull(markup);
-        operations.Add(new TrainingCardAddRow(selector, new Markup(markup)));
-        return this;
-    }
-
-    public LegendTrainingCardPatch Border(Color color)
-    {
-        operations.Add(new TrainingCardSetBorder(selector, color));
+        operations.Add(new TrainingCardHighlight(selector));
         return this;
     }
 
@@ -106,27 +96,20 @@ public sealed class LegendSelectionCardPatch
     public LegendSelectionCardPatch AddDescription(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        operations.Add(new SelectionCardAddRow(selector, new Text(text)));
+        operations.Add(new SelectionCardAddRow(selector, text));
         return this;
     }
 
     public LegendSelectionCardPatch AddText(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        operations.Add(new SelectionCardAddRow(selector, new Text(text)));
+        operations.Add(new SelectionCardAddRow(selector, text));
         return this;
     }
 
-    public LegendSelectionCardPatch AddMarkup(string markup)
+    public LegendSelectionCardPatch Highlight()
     {
-        ArgumentNullException.ThrowIfNull(markup);
-        operations.Add(new SelectionCardAddRow(selector, new Markup(markup)));
-        return this;
-    }
-
-    public LegendSelectionCardPatch Border(Color color)
-    {
-        operations.Add(new SelectionCardSetBorder(selector, color));
+        operations.Add(new SelectionCardHighlight(selector));
         return this;
     }
 
@@ -154,14 +137,7 @@ public sealed class LegendDisplayRowsPatch
     public LegendDisplayRowsPatch AddText(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        operations.Add(new RowsAddRenderable(target, new Text(text)));
-        return this;
-    }
-
-    public LegendDisplayRowsPatch AddMarkup(string markup)
-    {
-        ArgumentNullException.ThrowIfNull(markup);
-        operations.Add(new RowsAddRenderable(target, new Markup(markup)));
+        operations.Add(new RowsAddText(target, text));
         return this;
     }
 }
@@ -182,14 +158,7 @@ public sealed class LegendScenarioPanelPatch
     public LegendScenarioPanelPatch AddText(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        operations.Add(new ScenarioPanelAddRow(key, new Text(text)));
-        return this;
-    }
-
-    public LegendScenarioPanelPatch AddMarkup(string markup)
-    {
-        ArgumentNullException.ThrowIfNull(markup);
-        operations.Add(new ScenarioPanelAddRow(key, new Markup(markup)));
+        operations.Add(new ScenarioPanelAddRow(key, text));
         return this;
     }
 
@@ -244,18 +213,18 @@ sealed record SelectionByColorOrdinal(LegendBuffColor Color, int OrdinalWithinCo
             ?? throw new InvalidOperationException($"传奇杯心得选择卡不存在: color={Color}, ordinal={OrdinalWithinColor}");
 }
 
-sealed record TrainingCardAddRow(ILegendTrainingCardSelector Selector, IRenderable Row)
+sealed record TrainingCardAddRow(ILegendTrainingCardSelector Selector, string Row)
     : ILegendTrainingDisplayPatchOperation
 {
     public void Apply(LegendTrainingDisplayBuilder builder)
         => Selector.Select(builder).AddRow(Row);
 }
 
-sealed record TrainingCardSetBorder(ILegendTrainingCardSelector Selector, Color Color)
+sealed record TrainingCardHighlight(ILegendTrainingCardSelector Selector)
     : ILegendTrainingDisplayPatchOperation
 {
     public void Apply(LegendTrainingDisplayBuilder builder)
-        => Selector.Select(builder).BorderColor = Color;
+        => Selector.Select(builder).Highlighted = true;
 }
 
 sealed record TrainingCardSetTitle(ILegendTrainingCardSelector Selector, string Title)
@@ -265,18 +234,18 @@ sealed record TrainingCardSetTitle(ILegendTrainingCardSelector Selector, string 
         => Selector.Select(builder).Title = Title;
 }
 
-sealed record SelectionCardAddRow(ILegendSelectionCardSelector Selector, IRenderable Row)
+sealed record SelectionCardAddRow(ILegendSelectionCardSelector Selector, string Row)
     : ILegendTrainingDisplayPatchOperation
 {
     public void Apply(LegendTrainingDisplayBuilder builder)
         => Selector.Select(builder).AddRow(Row);
 }
 
-sealed record SelectionCardSetBorder(ILegendSelectionCardSelector Selector, Color Color)
+sealed record SelectionCardHighlight(ILegendSelectionCardSelector Selector)
     : ILegendTrainingDisplayPatchOperation
 {
     public void Apply(LegendTrainingDisplayBuilder builder)
-        => Selector.Select(builder).BorderColor = Color;
+        => Selector.Select(builder).Highlighted = true;
 }
 
 sealed record SelectionCardSetTitle(ILegendSelectionCardSelector Selector, string Title)
@@ -292,7 +261,7 @@ enum LegendDisplayRowsTarget
     Extra
 }
 
-sealed record RowsAddRenderable(LegendDisplayRowsTarget Target, IRenderable Row)
+sealed record RowsAddText(LegendDisplayRowsTarget Target, string Row)
     : ILegendTrainingDisplayPatchOperation
 {
     public void Apply(LegendTrainingDisplayBuilder builder)
@@ -304,25 +273,14 @@ sealed record RowsAddRenderable(LegendDisplayRowsTarget Target, IRenderable Row)
     }
 }
 
-sealed record ScenarioPanelAddRow(string Key, IRenderable Row) : ILegendTrainingDisplayPatchOperation
+sealed record ScenarioPanelAddRow(string Key, string Row) : ILegendTrainingDisplayPatchOperation
 {
     public void Apply(LegendTrainingDisplayBuilder builder)
     {
         var panel = builder.FindScenarioPanel(Key)
             ?? throw new InvalidOperationException($"传奇杯剧本面板不存在: key={Key}");
 
-        panel.Content = AppendRow(panel.Content, Row);
-    }
-
-    static IRenderable AppendRow(IRenderable current, IRenderable row)
-    {
-        var table = new Table();
-        table.HideHeaders();
-        table.NoBorder();
-        table.AddColumn(string.Empty);
-        table.AddRow(current);
-        table.AddRow(row);
-        return table;
+        panel.Content = $"{panel.Content}{Environment.NewLine}{Row}";
     }
 }
 

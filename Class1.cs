@@ -1,6 +1,5 @@
 using Gallop;
 using Gallop.Endpoints;
-using Spectre.Console;
 using UmamusumeResponseAnalyzer.LiveDisplay;
 using UmamusumeResponseAnalyzer.Plugin;
 
@@ -33,11 +32,12 @@ public sealed class LegendScenarioAnalyzer : IPlugin
     public void Dispose()
     {
         LegendTrainingDisplay.ClearCurrentDisplay(this);
+        if (liveDisplay is { } output && workspace is { } ownedWorkspace)
+            output.RemoveWorkspace(ownedWorkspace);
+
         workspace = null;
         liveDisplay = null;
     }
-
-    public Task UpdatePlugin(ProgressContext ctx) => Task.CompletedTask;
 
     [ResponseAnalyzer<GameApi.SingleModeLegend.ChangeShortCut>(1)]
     public ValueTask Analyze(SingleModeLegendChangeShortCutResponse response)
