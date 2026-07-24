@@ -160,9 +160,6 @@
   <data name="I18N_Red" xml:space="preserve">
     <value>Red</value>
   </data>
-  <data name="I18N_RepeatTurn" xml:space="preserve">
-    <value>[yellow]This turn is a duplicate display[/]</value>
-  </data>
   <data name="I18N_Sashi" xml:space="preserve">
     <value>差</value>
   </data>
@@ -201,9 +198,6 @@
   </data>
   <data name="I18N_WizSimple" xml:space="preserve">
     <value>Wz</value>
-  </data>
-  <data name="I18N_WrongTurnAlert" xml:space="preserve">
-    <value>[red]Warning: Incorrect turn, the previous turn was {0}, the current turn is {1}[/]</value>
   </data>
   <data name="I18N_Year" xml:space="preserve">
     <value>Year</value>
