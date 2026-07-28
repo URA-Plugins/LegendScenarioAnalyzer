@@ -24,7 +24,6 @@ public sealed class LegendScenarioAnalyzer : IPlugin
     public void Initialize(IPluginContext context)
     {
         liveDisplay = context.LiveDisplay;
-        workspace = LiveDisplay.CreateWorkspace(WorkspaceTitle);
         checkedBootstrapWorkspace = false;
         currentTurn = 0;
     }
@@ -356,5 +355,5 @@ public sealed class LegendScenarioAnalyzer : IPlugin
         ?? throw new InvalidOperationException("LegendScenarioAnalyzer 尚未初始化 LiveDisplay。");
 
     LiveDisplayWorkspace Workspace => workspace
-        ?? throw new InvalidOperationException("LegendScenarioAnalyzer 尚未创建 LiveDisplay workspace。");
+        ??= LiveDisplay.CreateWorkspace(WorkspaceTitle);
 }
