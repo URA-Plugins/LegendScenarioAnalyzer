@@ -1,6 +1,6 @@
 using Gallop;
 using Gallop.Endpoints;
-using UmamusumeResponseAnalyzer.LiveDisplay;
+using UmamusumeResponseAnalyzer.TerminalGui;
 using UmamusumeResponseAnalyzer.Plugin;
 
 namespace LegendScenarioAnalyzer;
@@ -10,9 +10,17 @@ public sealed class LegendScenarioAnalyzer : IPlugin
     const string WorkspaceTitle = "LegendScenarioAnalyzer";
     const string TrainingPanelKey = "training";
 
-    ILiveDisplayOutput? liveDisplay;
-    LiveDisplayWorkspace? workspace;
-    bool checkedBootstrapWorkspace;
+    [ThreadStatic]
+    static (Func<bool> TryBegin, Action End)? currentDisplayCommit;
+
+    readonly object renderGate = new();
+    Workspace? workspace;
+    TaskCompletionSource<object?>? publishingDrained;
+    TaskCompletionSource<Exception?>? cleanupInProgress;
+    long generation;
+    int publishing;
+    bool acceptingCallbacks;
+    int checkedBootstrapWorkspace;
     int currentTurn;
 
     public string Name => "LegendScenarioAnalyzer";
@@ -21,21 +29,103 @@ public sealed class LegendScenarioAnalyzer : IPlugin
 
     public string[] Targets => [];
 
+    public static bool WithCurrentDisplayCommit(
+        Func<bool> tryBeginCommit,
+        Action endCommit,
+        Func<bool> modifyCurrent)
+    {
+        ArgumentNullException.ThrowIfNull(tryBeginCommit);
+        ArgumentNullException.ThrowIfNull(endCommit);
+        ArgumentNullException.ThrowIfNull(modifyCurrent);
+
+        var previousCommit = currentDisplayCommit;
+        currentDisplayCommit = (tryBeginCommit, endCommit);
+        try
+        {
+            return modifyCurrent();
+        }
+        finally
+        {
+            currentDisplayCommit = previousCommit;
+        }
+    }
+
     public void Initialize(IPluginContext context)
     {
-        liveDisplay = context.LiveDisplay;
-        checkedBootstrapWorkspace = false;
-        currentTurn = 0;
+        lock (renderGate)
+        {
+            acceptingCallbacks = true;
+            generation++;
+            checkedBootstrapWorkspace = 0;
+            currentTurn = 0;
+        }
     }
 
     public void Dispose()
     {
-        LegendTrainingDisplay.ClearCurrentDisplay(this);
-        if (liveDisplay is { } output && workspace is { } ownedWorkspace)
-            output.RemoveWorkspace(ownedWorkspace);
+        Task<Exception?>? existingCleanup = null;
+        TaskCompletionSource<Exception?>? ownedCleanup = null;
+        Task? publishWait = null;
+        lock (renderGate)
+        {
+            if (cleanupInProgress is { } currentCleanup)
+            {
+                existingCleanup = currentCleanup.Task;
+            }
+            else
+            {
+                acceptingCallbacks = false;
+                generation++;
+                ownedCleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                cleanupInProgress = ownedCleanup;
+                publishWait = publishingDrained?.Task;
+            }
+        }
 
-        workspace = null;
-        liveDisplay = null;
+        if (existingCleanup is not null)
+        {
+            var priorFailure = existingCleanup.GetAwaiter().GetResult();
+            if (priorFailure is not null)
+                throw priorFailure;
+            return;
+        }
+
+        publishWait?.GetAwaiter().GetResult();
+        Exception? failure = null;
+        try
+        {
+            LegendTrainingDisplay.ClearCurrentDisplay(this);
+
+            Workspace? target;
+            lock (renderGate)
+                target = workspace;
+
+            if (target is not null)
+            {
+                target.RemovePanel(TrainingPanelKey);
+                lock (renderGate)
+                {
+                    if (ReferenceEquals(workspace, target))
+                        workspace = null;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+        finally
+        {
+            ownedCleanup!.TrySetResult(failure);
+            lock (renderGate)
+            {
+                if (ReferenceEquals(cleanupInProgress, ownedCleanup))
+                    cleanupInProgress = null;
+            }
+        }
+
+        if (failure is not null)
+            throw failure;
     }
 
     [ResponseAnalyzer<GameApi.SingleModeLegend.ChangeShortCut>(1)]
@@ -254,52 +344,114 @@ public sealed class LegendScenarioAnalyzer : IPlugin
 
         var turn = new TurnInfoLegend(data);
         var trainStats = LegendTrainingStatsCalculator.CreateTrainStats(turn);
-        var context = new LegendTrainingDisplayContext(data, turn, trainStats, currentTurn);
+        long callbackGeneration;
+        int previousTurn;
+        lock (renderGate)
+        {
+            if (!acceptingCallbacks)
+                return ValueTask.CompletedTask;
 
-        if (data.Stage == LegendScenarioStage.Training)
-            currentTurn = turn.Turn;
+            callbackGeneration = generation;
+            previousTurn = currentTurn;
+            if (data.Stage == LegendScenarioStage.Training)
+                currentTurn = turn.Turn;
+        }
 
-        LegendTrainingDisplay.SetCurrentDisplay(
-            this,
-            (extraModifier, switchToWorkspace) => RenderTrainingDisplay(context, extraModifier, switchToWorkspace));
-        RenderTrainingDisplay(context, extraModifier: null);
+        var context = new LegendTrainingDisplayContext(data, turn, trainStats, previousTurn);
+        if (!TryBeginPublish(callbackGeneration))
+            return ValueTask.CompletedTask;
+        try
+        {
+            LegendTrainingDisplay.SetCurrentDisplay(
+                this,
+                (extraModifier, switchToWorkspace) => RenderTrainingDisplay(
+                    context,
+                    callbackGeneration,
+                    extraModifier,
+                    currentDisplayCommit,
+                    switchToWorkspace));
+        }
+        finally
+        {
+            EndPublish(target: null, published: false);
+        }
+
+        RenderTrainingDisplay(context, callbackGeneration, extraModifier: null);
         return ValueTask.CompletedTask;
     }
 
     void RenderTrainingDisplay(
         LegendTrainingDisplayContext context,
+        long callbackGeneration,
         Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>? extraModifier,
+        (Func<bool> TryBegin, Action End)? externalCommit = null,
         bool switchToWorkspace = true)
     {
+        lock (renderGate)
+        {
+            if (!acceptingCallbacks || generation != callbackGeneration)
+                return;
+        }
+
         var builder = LegendTrainingDisplayBuilder.CreateDefault(context);
-        ApplyDisplayModifiers(context, builder);
+        ApplyDisplayModifiers(context, builder, callbackGeneration);
         if (extraModifier is not null)
-            ApplyDisplayModifier(context, builder, extraModifier);
+            ApplyDisplayModifier(context, builder, extraModifier, callbackGeneration);
 
         var content = LegendTrainingDisplayRenderer.Render(builder);
-        if (switchToWorkspace)
-            SwitchFromBootstrapOnFirstActivation();
-        LiveDisplay.SetPanel(
-            Workspace,
-            TrainingPanelKey,
-            "传奇杯训练",
-            content,
-            fullBleed: true,
-            switchToWorkspace: switchToWorkspace);
+        if (!TryBeginPublish(callbackGeneration))
+            return;
+
+        Workspace? target = null;
+        var published = false;
+        Action? endExternalCommit = null;
+        try
+        {
+            if (externalCommit is { } commit)
+            {
+                if (!commit.TryBegin())
+                    return;
+                endExternalCommit = commit.End;
+            }
+
+            target = Workspace.Create(WorkspaceTitle);
+            if (switchToWorkspace)
+                SwitchFromBootstrapOnFirstActivation(target);
+            target.SetPanel(
+                TrainingPanelKey,
+                "传奇杯训练",
+                content,
+                fullBleed: true,
+                switchToWorkspace: switchToWorkspace);
+            published = true;
+        }
+        finally
+        {
+            try
+            {
+                EndPublish(target, published);
+            }
+            finally
+            {
+                endExternalCommit?.Invoke();
+            }
+        }
     }
 
     void ApplyDisplayModifiers(
         LegendTrainingDisplayContext context,
-        LegendTrainingDisplayBuilder builder)
+        LegendTrainingDisplayBuilder builder,
+        long callbackGeneration)
     {
         foreach (var modifier in LegendTrainingDisplayRegistry.Snapshot())
-            ApplyDisplayModifier(context, builder, modifier);
+            ApplyDisplayModifier(context, builder, modifier, callbackGeneration);
     }
 
     void ApplyDisplayModifier(
         LegendTrainingDisplayContext context,
         LegendTrainingDisplayBuilder builder,
-        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier)
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier,
+        long callbackGeneration)
     {
         try
         {
@@ -307,7 +459,7 @@ public sealed class LegendScenarioAnalyzer : IPlugin
         }
         catch (Exception ex)
         {
-            LiveDisplay.Log(Workspace, $"Legend 训练显示 patch 执行失败: {ex.Message}", LiveDisplaySeverity.Error);
+            PublishPatchError(callbackGeneration, $"Legend 训练显示 patch 执行失败: {ex.Message}");
 #if DEBUG
             throw;
 #endif
@@ -341,19 +493,58 @@ public sealed class LegendScenarioAnalyzer : IPlugin
                 && baseTrainId == trainId));
     }
 
-    void SwitchFromBootstrapOnFirstActivation()
+    void SwitchFromBootstrapOnFirstActivation(Workspace target)
     {
-        if (checkedBootstrapWorkspace)
+        if (Interlocked.Exchange(ref checkedBootstrapWorkspace, 1) != 0)
             return;
 
-        checkedBootstrapWorkspace = true;
-        if (LiveDisplay.CurrentWorkspace?.Title == "启动")
-            LiveDisplay.SwitchWorkspace(Workspace);
+        if (Workspace.Current?.Title == "启动")
+            target.SwitchTo();
     }
 
-    ILiveDisplayOutput LiveDisplay => liveDisplay
-        ?? throw new InvalidOperationException("LegendScenarioAnalyzer 尚未初始化 LiveDisplay。");
+    void PublishPatchError(long callbackGeneration, string message)
+    {
+        if (!TryBeginPublish(callbackGeneration))
+            return;
 
-    LiveDisplayWorkspace Workspace => workspace
-        ??= LiveDisplay.CreateWorkspace(WorkspaceTitle);
+        try
+        {
+            Workspace.Create(WorkspaceTitle).Log(message, UiSeverity.Error);
+        }
+        finally
+        {
+            EndPublish(target: null, published: false);
+        }
+    }
+
+    bool TryBeginPublish(long callbackGeneration)
+    {
+        lock (renderGate)
+        {
+            if (!acceptingCallbacks || generation != callbackGeneration)
+                return false;
+
+            if (publishing++ == 0)
+                publishingDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            return true;
+        }
+    }
+
+    void EndPublish(Workspace? target, bool published)
+    {
+        TaskCompletionSource<object?>? drained = null;
+        lock (renderGate)
+        {
+            if (published)
+                workspace = target;
+
+            if (--publishing == 0)
+            {
+                drained = publishingDrained;
+                publishingDrained = null;
+            }
+        }
+
+        drained?.TrySetResult(null);
+    }
 }

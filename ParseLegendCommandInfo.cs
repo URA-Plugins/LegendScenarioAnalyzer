@@ -1,5 +1,5 @@
 using System.Text;
-using UmamusumeResponseAnalyzer.LiveDisplay;
+using UmamusumeResponseAnalyzer.TerminalGui;
 
 namespace LegendScenarioAnalyzer;
 
@@ -180,8 +180,8 @@ internal sealed class LegendTrainingDisplayBuilder
 
 internal static class LegendTrainingDisplayRenderer
 {
-    public static LiveDisplayContent Render(LegendTrainingDisplayBuilder builder)
-        => LiveDisplayContent.Text(RenderText(builder));
+    public static WorkspaceContent Render(LegendTrainingDisplayBuilder builder)
+        => WorkspaceContent.Text(RenderText(builder));
 
     static string RenderText(LegendTrainingDisplayBuilder builder)
     {
