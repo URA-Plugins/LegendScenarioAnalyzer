@@ -376,7 +376,12 @@ public sealed class LegendScenarioAnalyzer : IPlugin
             EndPublish(target: null, published: false);
         }
 
-        RenderTrainingDisplay(context, callbackGeneration, extraModifier: null);
+        RenderTrainingDisplay(
+            context,
+            callbackGeneration,
+            extraModifier: null,
+            switchToWorkspace: false,
+            switchFromBootstrap: true);
         return ValueTask.CompletedTask;
     }
 
@@ -385,7 +390,8 @@ public sealed class LegendScenarioAnalyzer : IPlugin
         long callbackGeneration,
         Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>? extraModifier,
         (Func<bool> TryBegin, Action End)? externalCommit = null,
-        bool switchToWorkspace = true)
+        bool switchToWorkspace = true,
+        bool switchFromBootstrap = false)
     {
         lock (renderGate)
         {
@@ -415,7 +421,7 @@ public sealed class LegendScenarioAnalyzer : IPlugin
             }
 
             target = Workspace.Create(WorkspaceTitle);
-            if (switchToWorkspace)
+            if (switchFromBootstrap)
                 SwitchFromBootstrapOnFirstActivation(target);
             target.SetPanel(
                 TrainingPanelKey,
