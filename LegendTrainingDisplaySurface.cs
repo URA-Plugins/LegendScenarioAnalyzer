@@ -22,26 +22,10 @@ public static class LegendTrainingDisplay
     static readonly object CurrentGate = new();
     static CurrentDisplay? currentDisplay;
 
-    public static IDisposable Modify(
-        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier,
-        int priority = 0)
-    {
-        ArgumentNullException.ThrowIfNull(modifier);
-        return LegendTrainingDisplayRegistry.Register(modifier, priority);
-    }
-
-    public static IDisposable Patch(Action<LegendTrainingDisplayPatch> patch, int priority = 0)
-    {
-        ArgumentNullException.ThrowIfNull(patch);
-
-        var displayPatch = new LegendTrainingDisplayPatch();
-        patch(displayPatch);
-        return Modify((_, display) => displayPatch.Apply(display), priority);
-    }
-
     public static bool ModifyCurrent(
         Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier,
-        bool switchToWorkspace = true)
+        bool switchToWorkspace = true,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(modifier);
 
@@ -52,30 +36,38 @@ public static class LegendTrainingDisplay
         if (current is null)
             return false;
 
-        current.Render(modifier, switchToWorkspace);
-        return true;
-    }
-
-    public static bool PatchCurrent(
-        Action<LegendTrainingDisplayPatch> patch,
-        bool switchToWorkspace = true)
-    {
-        ArgumentNullException.ThrowIfNull(patch);
-
-        var displayPatch = new LegendTrainingDisplayPatch();
-        patch(displayPatch);
-        return ModifyCurrent((_, display) => displayPatch.Apply(display), switchToWorkspace);
+        return current.Render(
+            modifier,
+            switchToWorkspace,
+            () => !cancellationToken.IsCancellationRequested && IsCurrent(current));
     }
 
     internal static void SetCurrentDisplay(
         object owner,
-        Action<Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?, bool> render)
+        Func<
+            Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?,
+            bool,
+            Func<bool>,
+            bool> render)
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(render);
 
+        var current = new CurrentDisplay(owner, render);
         lock (CurrentGate)
-            currentDisplay = new(owner, render);
+            currentDisplay = current;
+
+        try
+        {
+            _ = current.Render(null, true, () => IsCurrent(current));
+        }
+        catch
+        {
+            lock (CurrentGate)
+                if (ReferenceEquals(currentDisplay, current))
+                    currentDisplay = null;
+            throw;
+        }
     }
 
     internal static void ClearCurrentDisplay(object owner)
@@ -89,9 +81,19 @@ public static class LegendTrainingDisplay
         }
     }
 
+    static bool IsCurrent(CurrentDisplay candidate)
+    {
+        lock (CurrentGate)
+            return ReferenceEquals(currentDisplay, candidate);
+    }
+
     sealed record CurrentDisplay(
         object Owner,
-        Action<Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?, bool> Render);
+        Func<
+            Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?,
+            bool,
+            Func<bool>,
+            bool> Render);
 }
 
 public sealed class LegendTrainingDisplayEditor
@@ -286,9 +288,9 @@ public sealed class LegendSelectionCardEditor
 
 public sealed class LegendDisplayRowsEditor
 {
-    readonly List<string> rows;
+    readonly LegendDisplayRows rows;
 
-    internal LegendDisplayRowsEditor(List<string> rows)
+    internal LegendDisplayRowsEditor(LegendDisplayRows rows)
     {
         this.rows = rows;
     }
@@ -332,7 +334,7 @@ public sealed class LegendScenarioPanelsEditor
         if (builder.FindScenarioPanel(key) is not null)
             throw new InvalidOperationException($"传奇杯剧本面板已存在: key={key}");
 
-        var panel = new LegendDisplayPanel(key, title, string.Empty);
+        var panel = new LegendDisplayPanel(key, title, string.Empty, showHeader: true);
         builder.ScenarioPanels.Add(panel);
         return new(panel);
     }
@@ -383,6 +385,6 @@ public sealed class LegendDisplayPanelEditor
     public void AddRow(string row)
     {
         ArgumentNullException.ThrowIfNull(row);
-        panel.Content = $"{panel.Content}{Environment.NewLine}{row}";
+        panel.AddRow(row);
     }
 }

@@ -5,8 +5,15 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
+		<Version>1.0.0</Version>
 		<!-- 自动把本插件的 NuGet 依赖闭包(CsvHelper 及其传递依赖)拷到输出 -->
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+		<PluginInternalName>LegendScenarioAnalyzer</PluginInternalName>
+		<PluginDisplayName>解析传奇杯回合信息</PluginDisplayName>
+		<PluginAuthor>UmaAi Team</PluginAuthor>
+		<PluginDescription>解析传奇杯回合信息</PluginDescription>
+		<PluginRepositoryUrl>https://github.com/URA-Plugins/LegendScenarioAnalyzer</PluginRepositoryUrl>
 	</PropertyGroup>
 
 	<ItemGroup>

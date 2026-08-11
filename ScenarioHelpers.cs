@@ -94,9 +94,9 @@ public sealed class TrainingPartner
         SingleModeCommandInfo command)
     {
         var supportCard = position is >= 1 and <= 6
-            ? Database.Names.GetSupportCard(response.CharaInfo.support_card_array.First(x => x.position == position).support_card_id)
+            ? Database.Names.GetRequiredSupportCard(response.CharaInfo.support_card_array.First(x => x.position == position).support_card_id)
             : null;
-        var rawName = supportCard?.Nickname ?? Database.Names.GetCharacter(position).Nickname;
+        var rawName = Database.Names.DisplayNickname(supportCard?.Id ?? position);
         var friendship = response.CharaInfo.evaluation_info_array.FirstOrDefault(x => x.target_id == position)?.evaluation ?? 0;
         var trainingType = TurnInfoLegend.ToTrainId.TryGetValue(command.command_id, out var baseCommandId)
             ? baseCommandId
@@ -104,8 +104,21 @@ public sealed class TrainingPartner
 
         Priority = position is >= 1 and <= 6 ? 0 : 1;
         Shining = supportCard is not null && friendship >= 80 && supportCard.CanTriggerFriendshipTraining(trainingType);
-        var displayName = rawName;
-        Name = $"{displayName}{(friendship is > 0 and < 100 ? $" {friendship}" : string.Empty)}";
+        var segments = new List<LegendDisplaySegment>();
+        if (command.tips_event_partner_array.Contains(position))
+            segments.Add(new("!", LegendDisplayColor.Red));
+        segments.Add(new(
+            rawName,
+            supportCard is not null && supportCard.IsFriendCard
+                ? LegendDisplayColor.Lime
+                : Shining
+                    ? LegendDisplayColor.Aqua
+                    : LegendDisplayColor.Normal));
+        if (friendship is > 0 and < 100)
+            segments.Add(new(friendship.ToString(), LegendDisplayColor.Red));
+
+        DisplayLine = new(segments);
+        Name = $"{rawName}{(friendship is > 0 and < 100 ? $" {friendship}" : string.Empty)}";
         if (command.tips_event_partner_array.Contains(position))
             Name = $"!{Name}";
     }
@@ -113,6 +126,7 @@ public sealed class TrainingPartner
     public int Priority { get; }
     public string Name { get; }
     public bool Shining { get; }
+    internal LegendDisplayLine DisplayLine { get; }
 }
 
 public sealed record LegendGaugeGain(int LegendId, int GainGauge);
