@@ -10,11 +10,14 @@ public sealed class LegendScenarioAnalyzer : IPlugin
     const string TrainingPanelKey = "training";
 
     readonly object renderGate = new();
+    readonly LegendDisplayHistory history = new(WorkspaceTitle, TrainingPanelKey, "传奇杯训练");
     Workspace? workspace;
     int currentTurn;
 
     public void Initialize(IPluginContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
+        history.Initialize(context.Application);
         context.Analyzers.Register<SingleModeLegendCheckEventResponse>(
             AnalyzerKind.Response,
             [
@@ -32,6 +35,7 @@ public sealed class LegendScenarioAnalyzer : IPlugin
 
     public void Dispose()
     {
+        history.Stop();
         LegendTrainingDisplay.ClearCurrentDisplay(this);
 
         lock (renderGate)
@@ -43,6 +47,11 @@ public sealed class LegendScenarioAnalyzer : IPlugin
             workspace = null;
         }
     }
+
+    public Task ConfigPromptAsync(
+        Terminal.Gui.App.IApplication application,
+        CancellationToken cancellationToken = default)
+        => history.ConfigPromptAsync(application, cancellationToken);
 
     public ValueTask Analyze(SingleModeLegendCheckEventResponse response)
     {
@@ -77,6 +86,9 @@ public sealed class LegendScenarioAnalyzer : IPlugin
         if (!CanRenderLegendResponse(data))
             return ValueTask.CompletedTask;
 
+        var historyKey = new LegendDisplayHistory.Key(
+            data.CharaInfo.single_mode_chara_id,
+            data.CharaInfo.turn);
         var turn = new TurnInfoLegend(data);
         var trainStats = LegendTrainingStatsCalculator.CreateTrainStats(turn);
         lock (renderGate)
@@ -95,12 +107,12 @@ public sealed class LegendScenarioAnalyzer : IPlugin
                         var content = LegendTrainingDisplayRenderer.Render(builder);
                         if (!isCurrent())
                             return false;
-                        target.SetPanel(
-                            TrainingPanelKey,
-                            "传奇杯训练",
+                        history.Publish(
+                            target,
+                            historyKey,
                             content,
-                            fullBleed: true,
-                            switchToWorkspace: switchToWorkspace);
+                            switchToWorkspace,
+                            () => workspace = target);
                         return true;
                     }
                 });

@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Globalization;
 using System.Text;
 using Terminal.Gui.Drawing;
+using Terminal.Gui.Input;
 using Terminal.Gui.Text;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
@@ -18,6 +19,9 @@ internal static class LegendTrainingDisplayRenderer
         var snapshot = LegendDisplaySnapshot.Create(builder);
         return new WorkspaceContent(() => new LegendDashboardView(snapshot));
     }
+
+    internal static bool TryScroll(View view, Command command)
+        => view is LegendDashboardView dashboard && dashboard.Scroll(command);
 
     sealed record LegendDisplaySnapshot(
         int MainWidth,
@@ -116,6 +120,14 @@ internal static class LegendTrainingDisplayRenderer
             CanFocus = true;
             TabStop = TabBehavior.TabGroup;
             ViewportSettings = ViewportSettingsFlags.HasScrollBars;
+            AddCommand(Command.PageUp, () => Scroll(Command.PageUp));
+            AddCommand(Command.PageDown, () => Scroll(Command.PageDown));
+            AddCommand(Command.Start, () => Scroll(Command.Start));
+            AddCommand(Command.End, () => Scroll(Command.End));
+            KeyBindings.ReplaceCommands(Key.PageUp, Command.PageUp);
+            KeyBindings.ReplaceCommands(Key.PageDown, Command.PageDown);
+            KeyBindings.ReplaceCommands(Key.Home, Command.Start);
+            KeyBindings.ReplaceCommands(Key.End, Command.End);
 
             mainWidth = snapshot.MainWidth;
             minimumContentWidth = mainWidth + (mainWidth + 3) / 4;
@@ -199,6 +211,23 @@ internal static class LegendTrainingDisplayRenderer
             }
 
             base.OnSubViewLayout(args);
+        }
+
+        internal bool Scroll(Command command)
+        {
+            var amount = command switch
+            {
+                Command.PageUp => -Math.Max(1, Viewport.Height),
+                Command.PageDown => Math.Max(1, Viewport.Height),
+                Command.Start => -GetContentSize().Height,
+                Command.End => GetContentSize().Height,
+                _ => 0,
+            };
+            if (amount == 0)
+                return false;
+
+            ScrollVertical(amount);
+            return true;
         }
 
         void AddPanelFrames(
