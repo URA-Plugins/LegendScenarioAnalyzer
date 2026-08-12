@@ -318,9 +318,29 @@ internal sealed class LegendDisplayHistory(
         }
 
         if (Environment.CurrentManagedThreadId == targetApplication.MainThreadId)
+        {
             Refresh();
-        else
-            targetApplication.Invoke(Refresh);
+            return;
+        }
+
+        var completion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        targetApplication.Invoke(() =>
+        {
+            try
+            {
+                Refresh();
+                completion.SetResult();
+            }
+            catch (Exception ex)
+            {
+                completion.SetException(ex);
+            }
+        });
+        completion.Task
+            .WaitAsync(TimeSpan.FromSeconds(10))
+            .GetAwaiter()
+            .GetResult();
     }
 
     View CreateHistoryView()
