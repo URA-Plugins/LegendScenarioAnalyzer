@@ -1,6 +1,6 @@
 namespace LegendScenarioAnalyzer;
 
-internal enum LegendDisplayColor
+public enum LegendDisplayColor
 {
     Normal,
     Cyan,
@@ -15,13 +15,13 @@ internal enum LegendDisplayColor
     Gray
 }
 
-internal enum LegendDisplayStyle
+public enum LegendDisplayStyle
 {
     Normal,
     Bold
 }
 
-internal readonly record struct LegendDisplaySegment(
+public readonly record struct LegendDisplaySegment(
     string Text,
     LegendDisplayColor Color = LegendDisplayColor.Normal,
     LegendDisplayStyle Style = LegendDisplayStyle.Normal);
@@ -387,6 +387,7 @@ internal sealed class LegendDisplayPanel(
     internal IReadOnlyList<LegendDisplayLine> Lines => contentRows.Lines;
 
     internal void AddRow(string row) => contentRows.Add(row);
+    internal void AddRow(LegendDisplayLine row) => contentRows.Add(row);
 
     static LegendDisplayRows CreateRows(LegendDisplayLine line)
     {
@@ -446,6 +447,7 @@ internal sealed class LegendSelectionCard(
     public bool Highlighted { get; set; }
 
     public void AddRow(string row) => Rows.Add(row);
+    public void AddRow(LegendDisplayLine row) => Rows.Add(row);
     public void AddRule() => Rows.Add(LegendDisplayLine.Rule);
 }
 

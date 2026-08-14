@@ -20,7 +20,29 @@ public enum LegendBuffColor
 public static class LegendTrainingDisplay
 {
     static readonly object CurrentGate = new();
+    static readonly List<ModifierRegistration> Modifiers = [];
     static CurrentDisplay? currentDisplay;
+
+    public static IDisposable RegisterModifier(
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier)
+    {
+        ArgumentNullException.ThrowIfNull(modifier);
+
+        var registration = new ModifierRegistration(modifier);
+        lock (CurrentGate)
+            Modifiers.Add(registration);
+
+        try
+        {
+            RefreshCurrent();
+            return registration;
+        }
+        catch
+        {
+            registration.Remove(refresh: false);
+            throw;
+        }
+    }
 
     public static bool ModifyCurrent(
         Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier,
@@ -36,10 +58,19 @@ public static class LegendTrainingDisplay
         if (current is null)
             return false;
 
-        return current.Render(
-            modifier,
-            switchToWorkspace,
-            () => !cancellationToken.IsCancellationRequested && IsCurrent(current));
+        return RenderCurrent(current, modifier, switchToWorkspace, cancellationToken);
+    }
+
+    public static bool RefreshCurrent(
+        bool switchToWorkspace = false,
+        CancellationToken cancellationToken = default)
+    {
+        CurrentDisplay? current;
+        lock (CurrentGate)
+            current = currentDisplay;
+
+        return current is not null &&
+            RenderCurrent(current, modifier: null, switchToWorkspace, cancellationToken);
     }
 
     internal static void SetCurrentDisplay(
@@ -54,18 +85,22 @@ public static class LegendTrainingDisplay
         ArgumentNullException.ThrowIfNull(render);
 
         var current = new CurrentDisplay(owner, render);
+        CurrentDisplay? previous;
         lock (CurrentGate)
+        {
+            previous = currentDisplay;
             currentDisplay = current;
+        }
 
         try
         {
-            _ = current.Render(null, true, () => IsCurrent(current));
+            _ = RenderCurrent(current, modifier: null, switchToWorkspace: true, CancellationToken.None);
         }
         catch
         {
             lock (CurrentGate)
                 if (ReferenceEquals(currentDisplay, current))
-                    currentDisplay = null;
+                    currentDisplay = previous;
             throw;
         }
     }
@@ -87,6 +122,35 @@ public static class LegendTrainingDisplay
             return ReferenceEquals(currentDisplay, candidate);
     }
 
+    static bool RenderCurrent(
+        CurrentDisplay current,
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>? modifier,
+        bool switchToWorkspace,
+        CancellationToken cancellationToken)
+    {
+        ModifierRegistration[] modifiers;
+        lock (CurrentGate)
+            modifiers = [.. Modifiers];
+
+        return current.Render(
+            (context, editor) =>
+            {
+                foreach (var registration in modifiers)
+                    registration.Apply(context, editor);
+                modifier?.Invoke(context, editor);
+            },
+            switchToWorkspace,
+            () => !cancellationToken.IsCancellationRequested && IsCurrent(current));
+    }
+
+    internal static LegendDisplayLine CreateStyledLine(LegendDisplaySegment[] segments)
+    {
+        ArgumentNullException.ThrowIfNull(segments);
+        if (segments.Any(segment => segment.Text is null))
+            throw new ArgumentException("显示片段文本不能为 null。", nameof(segments));
+        return LegendDisplayLine.Styled(segments);
+    }
+
     sealed record CurrentDisplay(
         object Owner,
         Func<
@@ -94,6 +158,30 @@ public static class LegendTrainingDisplay
             bool,
             Func<bool>,
             bool> Render);
+
+    sealed class ModifierRegistration(
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier) : IDisposable
+    {
+        int disposed;
+
+        internal void Apply(
+            LegendTrainingDisplayContext context,
+            LegendTrainingDisplayEditor editor)
+            => modifier(context, editor);
+
+        public void Dispose() => Remove(refresh: true);
+
+        internal void Remove(bool refresh)
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            lock (CurrentGate)
+                Modifiers.Remove(this);
+            if (refresh)
+                RefreshCurrent();
+        }
+    }
 }
 
 public sealed class LegendTrainingDisplayEditor
@@ -200,6 +288,9 @@ public sealed class LegendTrainingCardEditor
         ArgumentNullException.ThrowIfNull(row);
         card.AddRow(row);
     }
+
+    public void AddStyled(params LegendDisplaySegment[] segments)
+        => card.AddRow(LegendTrainingDisplay.CreateStyledLine(segments));
 }
 
 public sealed class LegendSelectionCardsEditor
@@ -284,6 +375,9 @@ public sealed class LegendSelectionCardEditor
         ArgumentNullException.ThrowIfNull(row);
         card.AddRow(row);
     }
+
+    public void AddStyled(params LegendDisplaySegment[] segments)
+        => card.AddRow(LegendTrainingDisplay.CreateStyledLine(segments));
 }
 
 public sealed class LegendDisplayRowsEditor
@@ -306,6 +400,9 @@ public sealed class LegendDisplayRowsEditor
         ArgumentNullException.ThrowIfNull(row);
         rows.Add(row);
     }
+
+    public void AddStyled(params LegendDisplaySegment[] segments)
+        => rows.Add(LegendTrainingDisplay.CreateStyledLine(segments));
 }
 
 public sealed class LegendScenarioPanelsEditor
@@ -387,4 +484,7 @@ public sealed class LegendDisplayPanelEditor
         ArgumentNullException.ThrowIfNull(row);
         panel.AddRow(row);
     }
+
+    public void AddStyled(params LegendDisplaySegment[] segments)
+        => panel.AddRow(LegendTrainingDisplay.CreateStyledLine(segments));
 }
