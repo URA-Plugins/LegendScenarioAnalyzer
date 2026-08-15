@@ -2,7 +2,7 @@
 
 `LegendScenarioAnalyzer` renders Legend scenario training and buff-selection information in a workspace. Each rendered analyzer response switches to the Legend workspace. The default Terminal.Gui display uses date/status panels, important information, Legend gauge panels, then either five horizontal training cards or aligned buff-selection rows, with Extras in a separate right column. Narrow windows keep the fixed layout available through horizontal and vertical scrolling.
 
-The workspace keeps an in-memory history keyed by `single_mode_chara_id` and `turn`. Repeated output for the same key replaces that entry in place, including output rebuilt by `ModifyCurrent`. Use ↑/↓ for the previous/next entry and ←/→ for the oldest/newest entry; use PageUp/PageDown, Home/End, or the mouse wheel to scroll the current display.
+The workspace retains display IDs keyed by `(single_mode_chara_id, turn)`. Repeated analyzer output for the same ID updates that unit in place. Use ↑/↓ for the previous/next ID and ←/→ for the oldest/newest ID; use PageUp/PageDown, Home/End, or the mouse wheel to scroll the selected display.
 
 `PluginData/LegendScenarioAnalyzer/settings.json` stores the history limit:
 
@@ -19,7 +19,9 @@ The valid range is `0` through `1000`. The default is `100`; `0` disables histor
 ```csharp
 using LegendScenarioAnalyzer;
 
-var modified = LegendTrainingDisplay.ModifyCurrent((_, display) =>
+using var producer = LegendTrainingDisplay.RegisterPartProducer();
+var id = new LegendTrainingDisplayId(singleModeCharaId, turn);
+producer.Update(id, (_, display) =>
 {
     display.Training.Modify(LegendTrain.Speed, card =>
     {
@@ -31,9 +33,10 @@ var modified = LegendTrainingDisplay.ModifyCurrent((_, display) =>
     {
         card.AddText("优先选择");
     });
-}, switchToWorkspace: false);
+});
+var shown = LegendTrainingDisplay.Show(id, switchToWorkspace: false);
 ```
 
-`ModifyCurrent` 从最新默认数据重建并发布一次修改；当前没有可修改的 display 时返回 `false`。它默认切换到 Legend workspace；传 `switchToWorkspace: false` 可静默刷新，传入 cancellation token 可阻止过期结果发布。每次 workspace mount 都创建新的 Terminal.Gui view，公开 display API 不暴露 `View` 实例。
+`producer.Update(id, part)` 只替换该 producer 在指定 ID 下的 part，不触碰 View；同一 producer 对同一 ID 最后一次更新胜出。`Show(id)` 将该 ID 的场景基础 part 与所有 producer parts 组合并发布一次；场景 part 尚不存在或 cancellation 已请求时返回 `false`。`switchToWorkspace` 只控制这次 Show 是否切换 workspace。
 
-`RegisterModifier` 注册按顺序应用到每次默认面板构建的常驻修改器，并返回用于撤销的 `IDisposable`；`RefreshCurrent(false)` 使用当前全部常驻修改器原位重建。注册、撤销和刷新不新增 history 项或未读提示，也不切换 workspace。`Important`、`Extra`、训练卡、选择卡和场景 panel 编辑器均支持普通文本及由 `LegendDisplaySegment` 组成的带颜色内容。修改器抛出异常时保留最后一次成功显示。
+不同 ID 的 parts 完全隔离；producer 注册顺序决定组合顺序。producer 注册、Update 与 Dispose 均不隐式发布。`Important`、`Extra`、训练卡、选择卡和场景 panel 编辑器均支持普通文本及由 `LegendDisplaySegment` 组成的带颜色内容。part 抛出异常时保留最后一次成功显示。

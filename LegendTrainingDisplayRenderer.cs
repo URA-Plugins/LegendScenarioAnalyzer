@@ -525,6 +525,9 @@ internal static class LegendTrainingDisplayRenderer
                 return text;
             if (value.StartsWith(card.SelectionLabel, StringComparison.Ordinal))
                 value = value[card.SelectionLabel.Length..].Trim();
+            var action = value.StartsWith("替换掉", StringComparison.Ordinal)
+                ? " 替换"
+                : string.Empty;
 
             var nameStart = value.IndexOf('（');
             var nameEnd = nameStart < 0 ? -1 : value.IndexOf('）', nameStart + 1);
@@ -534,7 +537,7 @@ internal static class LegendTrainingDisplayRenderer
                 var suffix = value[(nameEnd + 1)..].Trim();
                 value = suffix.Length == 0 ? name : $"{name} {suffix}";
             }
-            return $"AI建议:{value}";
+            return $"AI建议:{action}{value}";
         }
 
         static string NormalizeInlineText(string text)

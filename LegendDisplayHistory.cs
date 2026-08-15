@@ -28,55 +28,215 @@ internal sealed class LegendDisplayHistory(
     readonly object gate = new();
     readonly List<Entry> entries = [];
     IApplication? application;
+    Func<Key, bool>? showUnit;
+    Action<Key>? evictUnit;
     Workspace? workspace;
     HistoryView? view;
     WorkspaceContent? liveSnapshot;
+    Key? visibleKey;
     int historyLimit = DefaultHistoryLimit;
     int selectedIndex = -1;
     bool active;
     bool hasUnread;
+    bool panelAdmitted;
 
     internal readonly record struct Key(int SingleModeCharaId, int Turn);
 
-    public void Initialize(IApplication targetApplication)
+    public void Initialize(
+        IApplication targetApplication,
+        Func<Key, bool> show,
+        Action<Key> evict)
     {
         ArgumentNullException.ThrowIfNull(targetApplication);
+        ArgumentNullException.ThrowIfNull(show);
+        ArgumentNullException.ThrowIfNull(evict);
         var settings = LoadSettings();
         lock (gate)
         {
             application = targetApplication;
+            showUnit = show;
+            evictUnit = evict;
             workspace = null;
             view = null;
             entries.Clear();
             liveSnapshot = null;
+            visibleKey = null;
             historyLimit = settings.HistoryLimit;
             selectedIndex = -1;
             hasUnread = false;
+            panelAdmitted = false;
             active = true;
         }
     }
 
-    public void Publish(
+    public bool ShouldShow(Key key)
+    {
+        lock (gate)
+        {
+            if (!active)
+                return false;
+            if (historyLimit == 0 ||
+                selectedIndex < 0 ||
+                selectedIndex >= entries.Count)
+            {
+                return true;
+            }
+            if (entries[selectedIndex].HistoryKey == key)
+                return true;
+
+            var retainedIndex = entries.FindIndex(entry => entry.HistoryKey == key);
+            if (retainedIndex >= 0)
+                return false;
+
+            return selectedIndex == entries.Count - 1 ||
+                entries.Count >= historyLimit && selectedIndex == 0;
+        }
+    }
+
+    public void Track(Workspace target, Key key)
+        => PublishOrTrack(target, key, snapshot: null, switchToWorkspace: false);
+
+    public void Show(
         Workspace target,
         Key key,
         WorkspaceContent snapshot,
-        bool switchToWorkspace,
-        Action panelAdmitted)
+        bool switchToWorkspace)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        PublishOrTrack(target, key, snapshot, switchToWorkspace);
+    }
+
+    void PublishOrTrack(
+        Workspace target,
+        Key key,
+        WorkspaceContent? snapshot,
+        bool switchToWorkspace)
     {
         ArgumentNullException.ThrowIfNull(target);
-        ArgumentNullException.ThrowIfNull(snapshot);
-        ArgumentNullException.ThrowIfNull(panelAdmitted);
 
-        target.SetPanel(
-            panelKey,
-            panelTitle,
-            StablePanelContent,
-            fullBleed: true,
-            switchToWorkspace: switchToWorkspace);
-        panelAdmitted();
+        var commit = snapshot is not null;
+        var evicted = new List<Key>();
+        Action<Key>? evict;
+        bool admitPanel;
+        bool notifyUnread;
+        lock (gate)
+        {
+            if (!active)
+                return;
 
-        var notifyUnread = ApplySnapshot(target, key, snapshot);
-        RefreshVisibleSnapshot();
+            workspace = target;
+            var previouslyVisible = visibleKey;
+            if (historyLimit == 0)
+            {
+                if (previouslyVisible is { } old && old != key)
+                    evicted.Add(old);
+                entries.Clear();
+                selectedIndex = -1;
+                hasUnread = false;
+                notifyUnread = false;
+            }
+            else
+            {
+                Key? selectedKey = selectedIndex >= 0 && selectedIndex < entries.Count
+                    ? entries[selectedIndex].HistoryKey
+                    : null;
+                var wasBrowsingOlder = selectedIndex >= 0 && selectedIndex < entries.Count - 1;
+                var previouslyUnread = hasUnread;
+                var index = entries.FindIndex(entry => entry.HistoryKey == key);
+                var inserted = index < 0;
+                if (inserted)
+                    entries.Add(new(key));
+
+                var overflow = entries.Count - historyLimit;
+                if (overflow > 0)
+                {
+                    evicted.AddRange(entries.Take(overflow).Select(entry => entry.HistoryKey));
+                    entries.RemoveRange(0, overflow);
+                }
+
+                if (commit)
+                {
+                    selectedIndex = entries.FindIndex(entry => entry.HistoryKey == key);
+                    if (selectedIndex < 0)
+                        throw new InvalidOperationException($"{workspaceTitle} 无法保留 DisplayId: {key}。");
+                    if (selectedIndex == entries.Count - 1)
+                        hasUnread = false;
+                    notifyUnread = false;
+                }
+                else
+                {
+                    var retainedSelection = selectedKey is { } currentKey
+                        ? entries.FindIndex(entry => entry.HistoryKey == currentKey)
+                        : -1;
+                    if (selectedKey is not null && retainedSelection < 0)
+                    {
+                        selectedIndex = entries.Count - 1;
+                        hasUnread = false;
+                    }
+                    else if (!wasBrowsingOlder || selectedKey is null)
+                    {
+                        selectedIndex = entries.Count - 1;
+                        hasUnread = false;
+                    }
+                    else
+                    {
+                        selectedIndex = retainedSelection;
+                        if (inserted)
+                            hasUnread = true;
+                        if (selectedIndex == entries.Count - 1)
+                            hasUnread = false;
+                    }
+
+                    notifyUnread = inserted && wasBrowsingOlder && !previouslyUnread && hasUnread;
+                }
+            }
+
+            if (commit)
+            {
+                liveSnapshot = snapshot;
+                visibleKey = key;
+            }
+            admitPanel = commit && !panelAdmitted;
+            if (admitPanel)
+                panelAdmitted = true;
+            evict = evictUnit;
+        }
+
+        foreach (var evictedKey in evicted.Distinct())
+            if (evictedKey != key)
+                evict?.Invoke(evictedKey);
+
+        if (commit)
+        {
+            try
+            {
+                if (admitPanel)
+                {
+                    target.SetPanel(
+                        panelKey,
+                        panelTitle,
+                        StablePanelContent,
+                        fullBleed: true,
+                        switchToWorkspace: switchToWorkspace);
+                }
+                else
+                {
+                    RefreshView(snapshot);
+                    if (switchToWorkspace && !ReferenceEquals(Workspace.Current, target))
+                        target.SwitchTo();
+                }
+            }
+            catch
+            {
+                if (admitPanel)
+                {
+                    lock (gate)
+                        panelAdmitted = false;
+                }
+                throw;
+            }
+        }
+
         if (notifyUnread)
             target.Notify("有新的训练历史。按 → 查看最新。");
     }
@@ -89,11 +249,15 @@ internal sealed class LegendDisplayHistory(
             active = false;
             entries.Clear();
             liveSnapshot = null;
+            visibleKey = null;
             selectedIndex = -1;
             hasUnread = false;
+            panelAdmitted = false;
             currentView = view;
             view = null;
             workspace = null;
+            showUnit = null;
+            evictUnit = null;
             application = null;
         }
         currentView?.Deactivate();
@@ -156,68 +320,12 @@ internal sealed class LegendDisplayHistory(
 
     WorkspaceContent? stablePanelContent;
 
-    bool ApplySnapshot(Workspace target, Key key, WorkspaceContent snapshot)
-    {
-        lock (gate)
-        {
-            if (!active)
-                return false;
-
-            workspace = target;
-            liveSnapshot = snapshot;
-            if (historyLimit == 0)
-            {
-                entries.Clear();
-                selectedIndex = -1;
-                hasUnread = false;
-                return false;
-            }
-
-            Key? selectedKey = selectedIndex >= 0 && selectedIndex < entries.Count
-                ? entries[selectedIndex].HistoryKey
-                : null;
-            var wasBrowsingOlder = selectedIndex >= 0 && selectedIndex < entries.Count - 1;
-            var previouslyUnread = hasUnread;
-            var index = entries.FindIndex(entry => entry.HistoryKey == key);
-            var inserted = index < 0;
-            if (inserted)
-                entries.Add(new(key, snapshot));
-            else
-                entries[index] = new(key, snapshot);
-
-            var overflow = entries.Count - historyLimit;
-            if (overflow > 0)
-                entries.RemoveRange(0, overflow);
-
-            var retainedSelection = selectedKey is { } currentKey
-                ? entries.FindIndex(entry => entry.HistoryKey == currentKey)
-                : -1;
-            if (selectedKey is not null && retainedSelection < 0)
-            {
-                selectedIndex = entries.Count - 1;
-                hasUnread = false;
-            }
-            else if (!wasBrowsingOlder || selectedKey is null)
-            {
-                selectedIndex = entries.Count - 1;
-                hasUnread = false;
-            }
-            else
-            {
-                selectedIndex = retainedSelection;
-                if (inserted)
-                    hasUnread = true;
-                if (selectedIndex == entries.Count - 1)
-                    hasUnread = false;
-            }
-
-            return inserted && wasBrowsingOlder && !previouslyUnread && hasUnread;
-        }
-    }
-
     void ApplyHistoryLimit(int value)
     {
-        WorkspaceContent? visible;
+        var evicted = new List<Key>();
+        Key? showKey = null;
+        Func<Key, bool>? show;
+        Action<Key>? evict;
         lock (gate)
         {
             Key? selectedKey = selectedIndex >= 0 && selectedIndex < entries.Count
@@ -226,6 +334,9 @@ internal sealed class LegendDisplayHistory(
             historyLimit = value;
             if (value == 0)
             {
+                evicted.AddRange(entries
+                    .Select(entry => entry.HistoryKey)
+                    .Where(key => key != visibleKey));
                 entries.Clear();
                 selectedIndex = -1;
                 hasUnread = false;
@@ -234,7 +345,10 @@ internal sealed class LegendDisplayHistory(
             {
                 var overflow = entries.Count - value;
                 if (overflow > 0)
+                {
+                    evicted.AddRange(entries.Take(overflow).Select(entry => entry.HistoryKey));
                     entries.RemoveRange(0, overflow);
+                }
                 selectedIndex = selectedKey is { } currentKey
                     ? entries.FindIndex(entry => entry.HistoryKey == currentKey)
                     : -1;
@@ -247,15 +361,24 @@ internal sealed class LegendDisplayHistory(
                 {
                     hasUnread = false;
                 }
+                if (selectedIndex >= 0 && entries[selectedIndex].HistoryKey != visibleKey)
+                    showKey = entries[selectedIndex].HistoryKey;
             }
-            visible = VisibleSnapshotLocked();
+            show = showUnit;
+            evict = evictUnit;
         }
-        RefreshView(visible);
+
+        foreach (var key in evicted.Distinct())
+            if (key != showKey && key != visibleKey)
+                evict?.Invoke(key);
+        if (showKey is { } targetKey && (show is null || !show(targetKey)))
+            throw new InvalidOperationException($"{workspaceTitle} 无法显示保留的 DisplayId: {targetKey}。");
     }
 
     bool TryNavigate(Navigation navigation)
     {
-        WorkspaceContent? snapshot = null;
+        Key? key = null;
+        Func<Key, bool>? show;
         Workspace? target;
         string? notification = null;
         lock (gate)
@@ -267,6 +390,7 @@ internal sealed class LegendDisplayHistory(
             {
                 if (selectedIndex < 0 || selectedIndex >= entries.Count)
                     selectedIndex = entries.Count - 1;
+                var previousIndex = selectedIndex;
                 selectedIndex = navigation switch
                 {
                     Navigation.Older => Math.Max(0, selectedIndex - 1),
@@ -277,24 +401,18 @@ internal sealed class LegendDisplayHistory(
                 };
                 if (selectedIndex == entries.Count - 1)
                     hasUnread = false;
-                snapshot = entries[selectedIndex].Content;
+                if (selectedIndex != previousIndex)
+                    key = entries[selectedIndex].HistoryKey;
                 notification = $"训练历史 {selectedIndex + 1}/{entries.Count}";
             }
+            show = showUnit;
         }
 
-        if (snapshot is not null)
-            RefreshView(snapshot);
+        if (key is { } targetKey && (show is null || !show(targetKey)))
+            throw new InvalidOperationException($"{workspaceTitle} 无法显示选中的 DisplayId: {targetKey}。");
         if (notification is not null)
             target?.Notify(notification);
         return true;
-    }
-
-    void RefreshVisibleSnapshot()
-    {
-        WorkspaceContent? snapshot;
-        lock (gate)
-            snapshot = VisibleSnapshotLocked();
-        RefreshView(snapshot);
     }
 
     void RefreshView(WorkspaceContent? snapshot)
@@ -403,10 +521,7 @@ internal sealed class LegendDisplayHistory(
                 ReferenceEquals(targetApplication, application);
     }
 
-    WorkspaceContent? VisibleSnapshotLocked()
-        => historyLimit > 0 && selectedIndex >= 0 && selectedIndex < entries.Count
-            ? entries[selectedIndex].Content
-            : liveSnapshot;
+    WorkspaceContent? VisibleSnapshotLocked() => liveSnapshot;
 
     static HistorySettings LoadSettings()
     {
@@ -642,7 +757,7 @@ internal sealed class LegendDisplayHistory(
         [property: JsonRequired]
         int HistoryLimit);
 
-    readonly record struct Entry(Key HistoryKey, WorkspaceContent Content);
+    readonly record struct Entry(Key HistoryKey);
 
     enum Navigation
     {

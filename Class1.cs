@@ -17,7 +17,12 @@ public sealed class LegendScenarioAnalyzer : IPlugin
     public void Initialize(IPluginContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        history.Initialize(context.Application);
+        history.Initialize(
+            context.Application,
+            key => LegendTrainingDisplay.Show(new(key.SingleModeCharaId, key.Turn)),
+            key => LegendTrainingDisplay.Remove(
+                this,
+                new(key.SingleModeCharaId, key.Turn)));
         context.Analyzers.Register<SingleModeLegendCheckEventResponse>(
             AnalyzerKind.Response,
             [
@@ -36,7 +41,7 @@ public sealed class LegendScenarioAnalyzer : IPlugin
     public void Dispose()
     {
         history.Stop();
-        LegendTrainingDisplay.ClearCurrentDisplay(this);
+        LegendTrainingDisplay.Clear(this);
 
         lock (renderGate)
         {
@@ -86,9 +91,12 @@ public sealed class LegendScenarioAnalyzer : IPlugin
         if (!CanRenderLegendResponse(data))
             return ValueTask.CompletedTask;
 
-        var historyKey = new LegendDisplayHistory.Key(
+        var displayId = new LegendTrainingDisplayId(
             data.CharaInfo.single_mode_chara_id,
             data.CharaInfo.turn);
+        var historyKey = new LegendDisplayHistory.Key(
+            displayId.SingleModeCharaId,
+            displayId.Turn);
         var turn = new TurnInfoLegend(data);
         var trainStats = LegendTrainingStatsCalculator.CreateTrainStats(turn);
         lock (renderGate)
@@ -96,28 +104,33 @@ public sealed class LegendScenarioAnalyzer : IPlugin
             var context = new LegendTrainingDisplayContext(data, turn, trainStats, currentTurn);
             var target = Workspace.Create(WorkspaceTitle);
 
-            LegendTrainingDisplay.SetCurrentDisplay(
+            LegendTrainingDisplay.Update(
                 this,
-                (modifier, switchToWorkspace, isCurrent) =>
+                displayId,
+                context,
+                LegendTrainingDisplayBuilder.CreateDefault,
+                (_, content, switchToWorkspace) =>
                 {
                     lock (renderGate)
                     {
-                        var builder = LegendTrainingDisplayBuilder.CreateDefault(context);
-                        modifier?.Invoke(context, new(builder));
-                        var content = LegendTrainingDisplayRenderer.Render(builder);
-                        if (!isCurrent())
-                            return false;
-                        history.Publish(
+                        history.Show(
                             target,
                             historyKey,
                             content,
-                            switchToWorkspace,
-                            () => workspace = target);
-                        return true;
+                            switchToWorkspace);
+                        workspace = target;
                     }
                 });
 
-            workspace = target;
+            if (history.ShouldShow(historyKey))
+            {
+                if (!LegendTrainingDisplay.Show(displayId, switchToWorkspace: true))
+                    throw new InvalidOperationException($"传奇杯 DisplayId 不存在: {displayId}。");
+            }
+            else
+            {
+                history.Track(target, historyKey);
+            }
             if (data.Stage == LegendScenarioStage.Training)
                 currentTurn = turn.Turn;
         }

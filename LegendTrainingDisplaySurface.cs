@@ -17,130 +17,110 @@ public enum LegendBuffColor
     Red = 2
 }
 
+public readonly record struct LegendTrainingDisplayId(int SingleModeCharaId, int Turn);
+
 public static class LegendTrainingDisplay
 {
-    static readonly object CurrentGate = new();
-    static readonly List<ModifierRegistration> Modifiers = [];
-    static CurrentDisplay? currentDisplay;
+    static readonly object Gate = new();
+    static readonly Dictionary<LegendTrainingDisplayId, DisplayUnit> Units = [];
+    static long nextProducerSequence;
 
-    public static IDisposable RegisterModifier(
-        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier)
+    public static LegendTrainingDisplayPartProducer RegisterPartProducer()
+        => new(Interlocked.Increment(ref nextProducerSequence));
+
+    internal static void Update(
+        object owner,
+        LegendTrainingDisplayId id,
+        LegendTrainingDisplayContext context,
+        Func<LegendTrainingDisplayContext, LegendTrainingDisplayBuilder> createBuilder,
+        Action<LegendTrainingDisplayId, UmamusumeResponseAnalyzer.TerminalGui.WorkspaceContent, bool> publish)
     {
-        ArgumentNullException.ThrowIfNull(modifier);
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(createBuilder);
+        ArgumentNullException.ThrowIfNull(publish);
 
-        var registration = new ModifierRegistration(modifier);
-        lock (CurrentGate)
-            Modifiers.Add(registration);
-
-        try
+        lock (Gate)
         {
-            RefreshCurrent();
-            return registration;
-        }
-        catch
-        {
-            registration.Remove(refresh: false);
-            throw;
+            if (!Units.TryGetValue(id, out var unit))
+                Units.Add(id, unit = new());
+            unit.Scenario = new(owner, context, createBuilder, publish);
         }
     }
 
-    public static bool ModifyCurrent(
-        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier,
-        bool switchToWorkspace = true,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(modifier);
-
-        CurrentDisplay? current;
-        lock (CurrentGate)
-            current = currentDisplay;
-
-        if (current is null)
-            return false;
-
-        return RenderCurrent(current, modifier, switchToWorkspace, cancellationToken);
-    }
-
-    public static bool RefreshCurrent(
+    public static bool Show(
+        LegendTrainingDisplayId id,
         bool switchToWorkspace = false,
         CancellationToken cancellationToken = default)
     {
-        CurrentDisplay? current;
-        lock (CurrentGate)
-            current = currentDisplay;
+        ScenarioPart scenario;
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>[] parts;
+        lock (Gate)
+        {
+            if (!Units.TryGetValue(id, out var unit) || unit.Scenario is not { } value)
+                return false;
+            scenario = value;
+            parts = [.. unit.Parts
+                .OrderBy(entry => entry.Key.Sequence)
+                .Select(entry => entry.Value)];
+        }
 
-        return current is not null &&
-            RenderCurrent(current, modifier: null, switchToWorkspace, cancellationToken);
+        var builder = scenario.CreateBuilder(scenario.Context);
+        var editor = new LegendTrainingDisplayEditor(builder);
+        foreach (var part in parts)
+            part(scenario.Context, editor);
+        var content = LegendTrainingDisplayRenderer.Render(builder);
+        if (cancellationToken.IsCancellationRequested)
+            return false;
+        scenario.Publish(id, content, switchToWorkspace);
+        return true;
     }
 
-    internal static void SetCurrentDisplay(
-        object owner,
-        Func<
-            Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?,
-            bool,
-            Func<bool>,
-            bool> render)
+    internal static void Remove(object owner, LegendTrainingDisplayId id)
     {
         ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(render);
-
-        var current = new CurrentDisplay(owner, render);
-        CurrentDisplay? previous;
-        lock (CurrentGate)
-        {
-            previous = currentDisplay;
-            currentDisplay = current;
-        }
-
-        try
-        {
-            _ = RenderCurrent(current, modifier: null, switchToWorkspace: true, CancellationToken.None);
-        }
-        catch
-        {
-            lock (CurrentGate)
-                if (ReferenceEquals(currentDisplay, current))
-                    currentDisplay = previous;
-            throw;
-        }
+        lock (Gate)
+            if (Units.TryGetValue(id, out var unit) && ReferenceEquals(unit.Scenario?.Owner, owner))
+                Units.Remove(id);
     }
 
-    internal static void ClearCurrentDisplay(object owner)
+    internal static void Clear(object owner)
     {
         ArgumentNullException.ThrowIfNull(owner);
+        lock (Gate)
+            foreach (var id in Units
+                         .Where(entry => ReferenceEquals(entry.Value.Scenario?.Owner, owner))
+                         .Select(entry => entry.Key)
+                         .ToArray())
+                Units.Remove(id);
+    }
 
-        lock (CurrentGate)
+    internal static void UpdatePart(
+        LegendTrainingDisplayPartProducer producer,
+        LegendTrainingDisplayId id,
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> part)
+    {
+        ArgumentNullException.ThrowIfNull(part);
+        lock (Gate)
         {
-            if (ReferenceEquals(currentDisplay?.Owner, owner))
-                currentDisplay = null;
+            ObjectDisposedException.ThrowIf(producer.IsDisposed, producer);
+            if (!Units.TryGetValue(id, out var unit))
+                Units.Add(id, unit = new());
+            unit.Parts[producer] = part;
         }
     }
 
-    static bool IsCurrent(CurrentDisplay candidate)
+    internal static void RemoveProducer(LegendTrainingDisplayPartProducer producer)
     {
-        lock (CurrentGate)
-            return ReferenceEquals(currentDisplay, candidate);
-    }
-
-    static bool RenderCurrent(
-        CurrentDisplay current,
-        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>? modifier,
-        bool switchToWorkspace,
-        CancellationToken cancellationToken)
-    {
-        ModifierRegistration[] modifiers;
-        lock (CurrentGate)
-            modifiers = [.. Modifiers];
-
-        return current.Render(
-            (context, editor) =>
+        lock (Gate)
+        {
+            foreach (var (id, unit) in Units.ToArray())
             {
-                foreach (var registration in modifiers)
-                    registration.Apply(context, editor);
-                modifier?.Invoke(context, editor);
-            },
-            switchToWorkspace,
-            () => !cancellationToken.IsCancellationRequested && IsCurrent(current));
+                unit.Parts.Remove(producer);
+                if (unit.Scenario is null && unit.Parts.Count == 0)
+                    Units.Remove(id);
+            }
+        }
     }
 
     internal static LegendDisplayLine CreateStyledLine(LegendDisplaySegment[] segments)
@@ -151,36 +131,40 @@ public static class LegendTrainingDisplay
         return LegendDisplayLine.Styled(segments);
     }
 
-    sealed record CurrentDisplay(
+    sealed record ScenarioPart(
         object Owner,
-        Func<
-            Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>?,
-            bool,
-            Func<bool>,
-            bool> Render);
+        LegendTrainingDisplayContext Context,
+        Func<LegendTrainingDisplayContext, LegendTrainingDisplayBuilder> CreateBuilder,
+        Action<LegendTrainingDisplayId, UmamusumeResponseAnalyzer.TerminalGui.WorkspaceContent, bool> Publish);
 
-    sealed class ModifierRegistration(
-        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> modifier) : IDisposable
+    sealed class DisplayUnit
     {
-        int disposed;
+        internal ScenarioPart? Scenario { get; set; }
+        internal Dictionary<LegendTrainingDisplayPartProducer, Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor>> Parts { get; } = [];
+    }
+}
 
-        internal void Apply(
-            LegendTrainingDisplayContext context,
-            LegendTrainingDisplayEditor editor)
-            => modifier(context, editor);
+public sealed class LegendTrainingDisplayPartProducer : IDisposable
+{
+    int disposed;
 
-        public void Dispose() => Remove(refresh: true);
+    internal LegendTrainingDisplayPartProducer(long sequence)
+    {
+        Sequence = sequence;
+    }
 
-        internal void Remove(bool refresh)
-        {
-            if (Interlocked.Exchange(ref disposed, 1) != 0)
-                return;
+    internal long Sequence { get; }
+    internal bool IsDisposed => Volatile.Read(ref disposed) != 0;
 
-            lock (CurrentGate)
-                Modifiers.Remove(this);
-            if (refresh)
-                RefreshCurrent();
-        }
+    public void Update(
+        LegendTrainingDisplayId id,
+        Action<LegendTrainingDisplayContext, LegendTrainingDisplayEditor> part)
+        => LegendTrainingDisplay.UpdatePart(this, id, part);
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref disposed, 1) == 0)
+            LegendTrainingDisplay.RemoveProducer(this);
     }
 }
 
