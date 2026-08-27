@@ -60,6 +60,8 @@ internal sealed class LegendDisplayRows : IReadOnlyList<string>
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+internal sealed record LegendExtraSection(string Title, LegendDisplayRows Rows);
+
 internal sealed class LegendTrainingDisplayBuilder
 {
     public LegendScenarioStage Stage { get; private init; }
@@ -69,6 +71,7 @@ internal sealed class LegendTrainingDisplayBuilder
     public List<LegendTrainingCard> TrainingCards { get; } = [];
     public List<LegendSelectionCard> SelectionCards { get; } = [];
     public LegendDisplayRows ExtraRows { get; } = new();
+    public List<LegendExtraSection> ExtraSections { get; } = [];
 
     public LegendTrainingCard? FindTrainingCardByTrainIndex(int trainIndex)
         => TrainingCards.FirstOrDefault(x => x.TrainIndex == trainIndex);

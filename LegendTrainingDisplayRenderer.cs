@@ -30,20 +30,38 @@ internal static class LegendTrainingDisplayRenderer
         LegendPanelSnapshot[] ScenarioPanels,
         LegendTrainingCardSnapshot[] TrainingCards,
         LegendSelectionCardSnapshot[] SelectionCards,
-        LegendDisplayLine[] ExtraRows)
+        LegendExtraSectionSnapshot[] ExtraSections)
     {
         public static LegendDisplaySnapshot Create(LegendTrainingDisplayBuilder builder)
-            => new(
+        {
+            var extraSections = new List<LegendExtraSectionSnapshot>();
+            if (builder.ExtraRows.Count != 0)
+                extraSections.Add(LegendExtraSectionSnapshot.Create("Legend", builder.ExtraRows));
+            extraSections.AddRange(builder.ExtraSections
+                .Where(section => section.Rows.Count != 0)
+                .Select(LegendExtraSectionSnapshot.Create));
+
+            return new(
                 CommandInfoLayout.Current.MainSectionWidth,
                 [.. builder.HeaderPanels.Select(LegendPanelSnapshot.Create)],
                 [.. builder.ImportantRows.Lines.Select(Copy)],
                 [.. builder.ScenarioPanels.Select(LegendPanelSnapshot.Create)],
                 [.. builder.TrainingCards.Select(LegendTrainingCardSnapshot.Create)],
                 [.. builder.SelectionCards.Select(LegendSelectionCardSnapshot.Create)],
-                [.. builder.ExtraRows.Lines.Select(Copy)]);
+                [.. extraSections]);
+        }
 
         internal static LegendDisplayLine Copy(LegendDisplayLine line)
             => new([.. line.Segments], line.IsRule);
+    }
+
+    sealed record LegendExtraSectionSnapshot(string Title, LegendDisplayLine[] Rows)
+    {
+        public static LegendExtraSectionSnapshot Create(LegendExtraSection section)
+            => Create(section.Title, section.Rows);
+
+        public static LegendExtraSectionSnapshot Create(string title, LegendDisplayRows rows)
+            => new(title, [.. rows.Lines.Select(LegendDisplaySnapshot.Copy)]);
     }
 
     sealed record LegendPanelSnapshot(
@@ -111,6 +129,7 @@ internal static class LegendTrainingDisplayRenderer
         readonly int minimumContentHeight;
         readonly View main;
         readonly FrameView extras;
+        readonly LegendDisplayLine[] extraRows;
 
         public LegendDashboardView(LegendDisplaySnapshot snapshot)
         {
@@ -142,6 +161,8 @@ internal static class LegendTrainingDisplayRenderer
             var normal = GetAttributeForRole(VisualRole.Normal);
             var palette = new LegendPalette(normal);
             SetScheme(palette.BaseScheme);
+            extraRows = [.. snapshot.ExtraSections.SelectMany(section =>
+                section.Rows.Prepend(LegendDisplayLine.Colored(section.Title, LegendDisplayColor.Cyan)))];
 
             main = new View
             {
@@ -179,7 +200,7 @@ internal static class LegendTrainingDisplayRenderer
                 0,
                 minimumContentWidth - mainWidth,
                 Dim.Fill(),
-                snapshot.ExtraRows,
+                extraRows,
                 palette,
                 wordWrap: true);
             Add(main, extras);
@@ -187,10 +208,15 @@ internal static class LegendTrainingDisplayRenderer
 
         protected override void OnSubViewLayout(LayoutEventArgs args)
         {
-            var visibleWidth = Math.Max(1, Viewport.Width);
-            var visibleHeight = Math.Max(1, Viewport.Height);
-            var contentWidth = Math.Max(visibleWidth, minimumContentWidth);
-            var contentHeight = Math.Max(visibleHeight, minimumContentHeight);
+            var frameWidth = Math.Max(1, Frame.Width);
+            var frameHeight = Math.Max(1, Frame.Height);
+            var contentWidth = Math.Max(frameWidth, minimumContentWidth);
+            var visibleHeight = Math.Max(1, frameHeight - (contentWidth > frameWidth ? 1 : 0));
+            var extraTextWidth = Math.Max(1, contentWidth - mainWidth - 4);
+            var extraHeight = extraRows.Sum(row => row.Text.Length == 0
+                ? 1
+                : TextFormatter.WordWrapText(row.Text, extraTextWidth).Count()) + 2;
+            var contentHeight = Math.Max(visibleHeight, Math.Max(minimumContentHeight, extraHeight));
             var contentSize = new Size(contentWidth, contentHeight);
             if (GetContentSize() != contentSize)
                 SetContentSize(contentSize);
@@ -199,8 +225,8 @@ internal static class LegendTrainingDisplayRenderer
             extras.Width = contentWidth - mainWidth;
             extras.Height = contentHeight;
 
-            var maxX = Math.Max(0, contentWidth - visibleWidth);
-            var maxY = Math.Max(0, contentHeight - visibleHeight);
+            var maxX = Math.Max(0, contentWidth - Math.Max(1, Viewport.Width));
+            var maxY = Math.Max(0, contentHeight - Math.Max(1, Viewport.Height));
             if (Viewport.X > maxX || Viewport.Y > maxY)
             {
                 Viewport = new Rectangle(
@@ -525,6 +551,7 @@ internal static class LegendTrainingDisplayRenderer
                 return text;
             if (value.StartsWith(card.SelectionLabel, StringComparison.Ordinal))
                 value = value[card.SelectionLabel.Length..].Trim();
+
             var nameStart = value.IndexOf('（');
             var nameEnd = nameStart < 0 ? -1 : value.IndexOf('）', nameStart + 1);
             if (nameStart >= 0 && nameEnd > nameStart)
