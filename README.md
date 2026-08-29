@@ -47,7 +47,7 @@ var shown = LegendTrainingDisplay.Show(id, switchToWorkspace: false);
 仓库通过 Git submodule 固定 Host 源码。克隆后在仓库根执行：
 
 ```powershell
-git submodule update --init --recursive
+git -c core.longpaths=true submodule update --init --recursive
 dotnet build .\LegendScenarioAnalyzer.csproj -c Release -m:1 -p:RuntimeIdentifier=win-x64 -p:SelfContained=false -p:PlatformTarget=AnyCPU -p:DeployUraPluginToLocalAppDataOnBuild=false
 dotnet run --project .\tests\LegendScenarioAnalyzerSmoke\LegendScenarioAnalyzerSmoke.csproj -c Release -m:1 -p:GenerateUraPluginManifestOnBuild=false -p:PackageUraPluginOnBuild=false -p:DeployUraPluginToLocalAppDataOnBuild=false
 ```
