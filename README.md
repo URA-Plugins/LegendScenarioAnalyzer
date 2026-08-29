@@ -41,3 +41,13 @@ var shown = LegendTrainingDisplay.Show(id, switchToWorkspace: false);
 `producer.Update(id, part)` 只替换该 producer 在指定 ID 下的 part，不触碰 View；同一 producer 对同一 ID 最后一次更新胜出。`Show(id)` 将该 ID 的场景基础 part 与所有 producer parts 组合并发布一次；场景 part 尚不存在或 cancellation 已请求时返回 `false`。`switchToWorkspace` 只控制这次 Show 是否切换 workspace。
 
 不同 ID 的 parts 完全隔离；producer 注册顺序决定组合顺序。`RegisterPartProducer(sourceTitle)` 要求非空单行标题。Analyzer 自身的非空 Extra 以青色 `Legend` 标题开头，随后每个 producer 的非空 Extra 以其青色标题开头；各 section 连续显示且不插入内层边框、缩进或空行。producer 注册、Update 与 Dispose 均不隐式发布。`Important`、`Extra`、训练卡、选择卡和场景 panel 编辑器均支持普通文本及由 `LegendDisplaySegment` 组成的带颜色内容。part 抛出异常时保留最后一次成功显示。
+
+## 构建
+
+仓库通过 Git submodule 固定 Host 源码。克隆后在仓库根执行：
+
+```powershell
+git submodule update --init --recursive
+dotnet build .\LegendScenarioAnalyzer.csproj -c Release -m:1 -p:RuntimeIdentifier=win-x64 -p:SelfContained=false -p:PlatformTarget=AnyCPU -p:DeployUraPluginToLocalAppDataOnBuild=false
+dotnet run --project .\tests\LegendScenarioAnalyzerSmoke\LegendScenarioAnalyzerSmoke.csproj -c Release -m:1 -p:GenerateUraPluginManifestOnBuild=false -p:PackageUraPluginOnBuild=false -p:DeployUraPluginToLocalAppDataOnBuild=false
+```
