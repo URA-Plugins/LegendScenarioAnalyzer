@@ -50,7 +50,7 @@ var shown = LegendTrainingDisplay.Show(id, switchToWorkspace: false);
 dotnet build .\LegendScenarioAnalyzer.csproj -c Release -m:1 -p:RuntimeIdentifier=win-x64 -p:SelfContained=false -p:PlatformTarget=AnyCPU -p:DeployUraPluginToLocalAppDataOnBuild=false
 ```
 
-Host-dependent smoke 位于 `tests/LegendScenarioAnalyzerSmoke`。
+Host-dependent smoke 位于 `tests/LegendScenarioAnalyzerSmoke`，测试进程在初始化 Host 配置前固定使用 `zh-CN`，布局断言使用中文文本与对应列宽。
 
 ## 验证与发布
 

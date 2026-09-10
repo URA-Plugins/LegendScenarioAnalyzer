@@ -27,6 +27,8 @@ var originalCwd = Directory.GetCurrentDirectory();
 var originalDisableRealDriverIo = Environment.GetEnvironmentVariable("DisableRealDriverIO");
 Environment.SetEnvironmentVariable("DisableRealDriverIO", "1");
 var originalUiCulture = Thread.CurrentThread.CurrentUICulture;
+var originalCulture = Thread.CurrentThread.CurrentCulture;
+Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("zh-CN");
 Thread.CurrentThread.CurrentUICulture = CultureInfo.GetCultureInfo("zh-CN");
 var workspace = Path.Combine(Path.GetTempPath(), "ura-legend-smoke-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(workspace);
@@ -125,6 +127,7 @@ finally
 {
     Directory.SetCurrentDirectory(originalCwd);
     Thread.CurrentThread.CurrentUICulture = originalUiCulture;
+    Thread.CurrentThread.CurrentCulture = originalCulture;
     Environment.SetEnvironmentVariable("DisableRealDriverIO", originalDisableRealDriverIo);
 }
 
