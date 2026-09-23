@@ -38,7 +38,7 @@ public sealed class LegendScenarioAnalyzer : IPlugin
             priority: 1);
     }
 
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
         history.Stop();
         LegendTrainingDisplay.Clear(this);
@@ -46,11 +46,13 @@ public sealed class LegendScenarioAnalyzer : IPlugin
         lock (renderGate)
         {
             if (workspace is not { } target)
-                return;
+                return ValueTask.CompletedTask;
 
             target.RemovePanel(TrainingPanelKey);
             workspace = null;
         }
+
+        return ValueTask.CompletedTask;
     }
 
     public Task ConfigPromptAsync(

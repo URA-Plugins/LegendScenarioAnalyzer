@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Gallop;
 using LegendScenarioAnalyzer;
 using Newtonsoft.Json;
@@ -21,6 +22,7 @@ using UmamusumeResponseAnalyzer.Plugin;
 using TColor = Terminal.Gui.Drawing.Color;
 using UraConfig = UmamusumeResponseAnalyzer.Config;
 using UraDatabase = UmamusumeResponseAnalyzer.Database;
+using UiText = UmamusumeResponseAnalyzer.Localization.TerminalGui;
 using LegendPlugin = LegendScenarioAnalyzer.LegendScenarioAnalyzer;
 
 var originalCwd = Directory.GetCurrentDirectory();
@@ -403,7 +405,7 @@ static void TestExtraSections()
     }
 }
 
-static ValueTask TestWorkspaceLifecycle(WorkspaceSmokeSession ui)
+static async ValueTask TestWorkspaceLifecycle(WorkspaceSmokeSession ui)
 {
     var plugin = new LegendPlugin();
 
@@ -414,11 +416,10 @@ static ValueTask TestWorkspaceLifecycle(WorkspaceSmokeSession ui)
         || !string.Equals(before, ui.CaptureScreen(), StringComparison.Ordinal))
         throw new InvalidOperationException("Initialize changed the visible Workspace or framebuffer.");
 
-    plugin.Dispose();
+    await plugin.DisposeAsync();
     if (!ReferenceEquals(Workspace.Current, ui.Bootstrap)
         || !string.Equals(before, ui.CaptureScreen(), StringComparison.Ordinal))
-        throw new InvalidOperationException("Unused Dispose changed the visible Workspace or framebuffer.");
-    return ValueTask.CompletedTask;
+        throw new InvalidOperationException("Unused DisposeAsync changed the visible Workspace or framebuffer.");
 }
 
 static ValueTask TestAnalyzerRegistrations(WorkspaceSmokeSession ui)
@@ -490,7 +491,7 @@ static async ValueTask TestCheckEventRendersTrainingPanel(WorkspaceSmokeSession 
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 
     var published = target ?? throw new InvalidOperationException("Legend did not create its Workspace.");
@@ -533,7 +534,7 @@ static async ValueTask TestLoadRendersTrainingPanel(WorkspaceSmokeSession ui)
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -601,7 +602,7 @@ static async ValueTask TestHistoryCompositeKeysNavigationAndTrim(WorkspaceSmokeS
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
         ui.Bootstrap.SwitchTo();
     }
 }
@@ -648,7 +649,7 @@ static async ValueTask TestHiddenDisplayIdUpdateIsInertUntilSelected(WorkspaceSm
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
         ui.Bootstrap.SwitchTo();
     }
 }
@@ -681,7 +682,7 @@ static async ValueTask TestHistoryLimitZeroKeepsLiveDisplay(WorkspaceSmokeSessio
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
         ui.Bootstrap.SwitchTo();
     }
 }
@@ -742,7 +743,7 @@ static async ValueTask TestHistoryKeepsPageScrolling(WorkspaceSmokeSession ui)
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
         ui.Bootstrap.SwitchTo();
     }
 }
@@ -853,7 +854,7 @@ static async ValueTask TestDisplayIdProducerUpdateAndShow(WorkspaceSmokeSession 
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -896,7 +897,7 @@ static async ValueTask TestFailedDisplayIdShowPreservesLatestWorkspace(Workspace
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -964,7 +965,10 @@ static async ValueTask TestRegisteredModifiers(WorkspaceSmokeSession ui)
         catch (InvalidOperationException ex) when (ex.Message == "persistent-sentinel")
         {
         }
-        if (!string.Equals(beforeFailure, CaptureWorkspace(ui, target), StringComparison.Ordinal))
+        if (!string.Equals(
+                NormalizeNotificationCountdown(beforeFailure),
+                NormalizeNotificationCountdown(CaptureWorkspace(ui, target)),
+                StringComparison.Ordinal))
             throw new InvalidOperationException("A failed producer part published a partial display.");
         failing.Dispose();
 
@@ -981,7 +985,7 @@ static async ValueTask TestRegisteredModifiers(WorkspaceSmokeSession ui)
     {
         second?.Dispose();
         first?.Dispose();
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -1071,7 +1075,7 @@ static async ValueTask TestSelectionProducerUpdateAndShow(WorkspaceSmokeSession 
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -1133,7 +1137,7 @@ static async ValueTask TestRealLoadPacketRendersWorkspacePanel(WorkspaceSmokeSes
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
         await InitializeSmokeDatabase(CreateDefaultNames());
     }
 }
@@ -1179,7 +1183,7 @@ static async ValueTask TestBuffSelectionRendersNonTrainingPanel(WorkspaceSmokeSe
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -1226,7 +1230,7 @@ static async ValueTask TestBuffSelectionRendersNineCandidatesCompactly(Workspace
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -1260,7 +1264,7 @@ static async ValueTask TestBuffSelectionToleratesNullTrainingParams(WorkspaceSmo
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -1292,7 +1296,7 @@ static async ValueTask TestBuffSelectionLoadRendersDespiteRaceStartInfo(Workspac
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -1318,7 +1322,7 @@ static async ValueTask TestBuffSelectionRequiresLegendBuffCsv(WorkspaceSmokeSess
     }
     finally
     {
-        plugin.Dispose();
+        await plugin.DisposeAsync();
     }
 }
 
@@ -1959,7 +1963,10 @@ static void RequireEqual<T>(T expected, T actual, string name)
 }
 
 static string NormalizeNotificationCountdown(string rendered)
-    => System.Text.RegularExpressions.Regex.Replace(rendered, @" \d+s ┘", " #s ┘");
+    => Regex.Replace(
+        rendered,
+        " " + Regex.Escape(UiText.Notification_Countdown).Replace(Regex.Escape("{0}"), @"\d+") + " ┘",
+        " # ┘");
 
 static void RequireSequence<T>(IReadOnlyList<T> actual, IReadOnlyList<T> expected, string name)
 {
@@ -2069,19 +2076,11 @@ sealed class HistoryLimitSettings : IDisposable
 sealed class RecordingPluginContext(IApplication application) : IPluginContext
 {
     public IApplication Application => application;
-    public IPluginHostEvents Events { get; } = new ThrowingPluginHostEvents();
     public RecordingPluginAnalyzerRegistry RecordedAnalyzers { get; } = new();
     public IPluginAnalyzerRegistry Analyzers => RecordedAnalyzers;
     public bool IsPluginAvailable(string internalName) => false;
 
-    public void RunBackground(Func<CancellationToken, ValueTask> operation)
-        => throw new NotSupportedException("Legend smoke does not use background operations.");
-}
-
-sealed class ThrowingPluginHostEvents : IPluginHostEvents
-{
-    public void OnStarted(Func<CancellationToken, ValueTask> handler)
-        => throw new NotSupportedException("Legend smoke does not use host events.");
+    public void ReportBackgroundFailure(Exception error) => throw new InvalidOperationException("Unexpected plugin background failure.", error);
 }
 
 sealed class RecordingPluginAnalyzerRegistry : IPluginAnalyzerRegistry
